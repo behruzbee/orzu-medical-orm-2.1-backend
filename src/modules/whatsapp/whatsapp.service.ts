@@ -26,11 +26,14 @@ export class WhatsappService implements OnModuleInit {
     this.client = new Client({
       authStrategy: new LocalAuth({ dataPath: './whatsapp-session' }),
       puppeteer: {
+        executablePath: process.env.CHROME_BIN || '/usr/bin/google-chrome',
         headless: true,
-        // Путь к Chrome может отличаться на сервере, лучше использовать переменные окружения
-        executablePath:
-          '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox', 
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+        ],
       },
     });
     this.initializeClient();

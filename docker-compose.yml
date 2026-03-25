@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  backend:
+    build: .
+    container_name: orzumed_backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      # Сохраняем папку с сессией WhatsApp на вашем сервере
+      - ./whatsapp-session:/app/whatsapp-session
+      # Сохраняем загруженные файлы (картинки, аудио, xlsx)
+      - ./uploads:/app/uploads
+    env_file:
+      - .env
