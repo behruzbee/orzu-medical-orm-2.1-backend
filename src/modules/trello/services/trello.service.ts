@@ -146,7 +146,6 @@ export class TrelloService {
     const memberFullName = action.memberCreator.fullName;
 
     const RESTRICTED_LISTS = [
-      this.configService.get('TRELLO_LIST_RESOLVED'),
       this.configService.get('TRELLO_LIST_COMPLETED'),
       this.configService.get('TRELLO_LIST_SUGGESTIONS'),
       this.configService.get('TRELLO_LIST_NOT_RELATED'),
