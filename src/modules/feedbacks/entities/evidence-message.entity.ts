@@ -11,7 +11,7 @@ export enum EvidenceType {
 
 export enum EvidenceSource {
   WHATSAPP = 'whatsapp',
-  MANUAL = 'manual',   // Загружено вручную оператором
+  MANUAL = 'manual',
 }
 
 @Entity('evidence_messages')
@@ -27,6 +27,17 @@ export class EvidenceMessage {
 
   @Column({ nullable: true })
   mediaUrl: string;
+
+  // 👇 ДОБАВЛЯЕМ ДВЕ НОВЫЕ КОЛОНКИ ДЛЯ ФАЙЛОВ 👇
+  
+  // select: false означает, что при обычном запросе жалоб этот тяжелый файл не будет грузиться
+  @Column({ type: 'bytea', nullable: true, select: false })
+  mediaData: Buffer; 
+
+  @Column({ nullable: true })
+  mimeType: string;
+
+  // ---------------------------------------------
 
   @Column({ nullable: true })
   duration: string;
