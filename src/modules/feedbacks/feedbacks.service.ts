@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { v4 as uuidv4 } from 'uuid'; // 👈 Импорт генератора UUID
+import { v4 as uuidv4 } from 'uuid'; 
 import { Feedback } from './entities/feedback.entity';
 import {
   EvidenceMessage,
@@ -21,7 +21,6 @@ export class FeedbacksService {
   ) {}
 
   async create(patientId: string, dto: CreateFeedbackDto, operatorId: string) {
-    // Получаем URL бэкенда (можно использовать вашу переменную окружения)
     const backendUrl = process.env.UPLOAD_URL || 'http://localhost:3000';
 
     const processedEvidence = await Promise.all(
