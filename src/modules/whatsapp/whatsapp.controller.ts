@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { WhatsappService } from './whatsapp.service';
 import { AuthGuard } from '@nestjs/passport';
+import { BroadcastDto } from './dto/broadcast.dto';
 
 @Controller('whatsapp')
 @UseGuards(AuthGuard('jwt'))
@@ -20,6 +21,11 @@ export class WhatsappController {
   async getHistory(@Query('phone') phone: string) {
     if (!phone) throw new BadRequestException('Phone is required');
     return this.whatsappService.getChatHistory(phone);
+  }
+
+  @Post('broadcast')
+  async broadcast(@Body() dto: BroadcastDto) {
+    return this.whatsappService.broadcastByFilters(dto);
   }
 
   @Post('send')

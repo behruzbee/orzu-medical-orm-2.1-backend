@@ -148,10 +148,11 @@ export class PatientActionsService {
 
       savedFeedback = await queryRunner.manager.save(feedback);
 
-      // ВАЖНО: Отправляем в Trello ДО коммита транзакции.
-      // Если метод sendToTrello выбросит ошибку, код перейдет в блок catch 
-      // и данные в базу сохранены не будут.
-      await this.sendToTrello(patient, savedFeedback, dto);
+      if (isComplaint || dto.sendToTrello) {
+        await this.sendToTrello(patient, savedFeedback, dto);
+      } else {
+        this.logger.log(`Идеальный отзыв ${savedFeedback.id} сохранен только в БД. Флаг sendToTrello не передан.`);
+      }
 
       await queryRunner.commitTransaction();
       return savedFeedback;

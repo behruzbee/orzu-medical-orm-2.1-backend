@@ -4,6 +4,7 @@ import {
   IsString,
   IsOptional,
   ValidateNested,
+  IsBoolean,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { CreateEvidenceDto } from './create-evidence.dto';
@@ -20,4 +21,8 @@ export class CreateFeedbackDto {
   @ValidateNested({ each: true })
   @Type(() => CreateEvidenceDto)
   evidence: CreateEvidenceDto[];
+
+  @IsOptional()
+  @IsBoolean()
+  sendToTrello?: boolean;
 }

@@ -4,12 +4,14 @@ import {
   Logger,
   BadRequestException,
 } from '@nestjs/common';
+import * as os from 'os';
 import { Client, LocalAuth, MessageMedia } from 'whatsapp-web.js';
 import { Subject, Observable } from 'rxjs';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Patient } from '../patients/entities/patient.entity';
 import { Repository } from 'typeorm';
 import { PatientStatus } from 'src/common/enums/patient-status.enum';
+import { BroadcastDto } from './dto/broadcast.dto';
 
 @Injectable()
 export class WhatsappService implements OnModuleInit {
@@ -23,14 +25,21 @@ export class WhatsappService implements OnModuleInit {
     @InjectRepository(Patient)
     private patientRepository: Repository<Patient>,
   ) {
+    // Check if OS is Mac ('darwin'), otherwise use the Linux path
+    const defaultChromePath =
+      os.platform() === 'darwin'
+        ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+        : '/usr/bin/google-chrome';
+
     this.client = new Client({
       authStrategy: new LocalAuth({ dataPath: './whatsapp-session' }),
       puppeteer: {
-        executablePath: process.env.CHROME_BIN || '/usr/bin/google-chrome',
+        // It will still prefer your .env variable if it exists, otherwise it safely falls back based on your OS
+        executablePath: process.env.CHROME_BIN || defaultChromePath,
         headless: true,
         args: [
           '--no-sandbox',
-          '--disable-setuid-sandbox', 
+          '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
           '--disable-gpu',
         ],
@@ -171,6 +180,72 @@ export class WhatsappService implements OnModuleInit {
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
     return `${m}:${s < 10 ? '0' : ''}${s}`;
+  }
+  
+  async broadcastByFilters(dto: BroadcastDto) {
+    if (!this.client.info) {
+      throw new BadRequestException('WhatsApp client not ready');
+    }
+
+    const qb = this.patientRepository.createQueryBuilder('patient');
+
+    // Применяем фильтры (точно как в PatientsService)
+    if (dto.status) qb.andWhere('patient.status = :status', { status: dto.status });
+    if (dto.branch) qb.andWhere('patient.branch = :branch', { branch: dto.branch });
+
+    const COUNTRY_CODES: Record<string, string> = {
+      Russia: '+7', Uzbekistan: '+998', Kazakhstan: '+77',
+      USA: '+1', Turkey: '+90', Korea: '+82',
+    };
+
+    if (dto.phoneCode) {
+      const code = COUNTRY_CODES[dto.phoneCode] || dto.phoneCode;
+      qb.andWhere('patient.phone LIKE :phoneCode', { phoneCode: `%${code}%` });
+    }
+
+    if (dto.dateFrom && dto.dateTo) {
+      qb.andWhere('patient.departureDate BETWEEN :dateFrom AND :dateTo', { dateFrom: dto.dateFrom, dateTo: dto.dateTo });
+    } else if (dto.dateFrom) {
+      qb.andWhere('patient.departureDate >= :dateFrom', { dateFrom: dto.dateFrom });
+    }
+
+    // Получаем всех пациентов, подходящих под фильтр
+    const patients = await qb.getMany();
+
+    if (patients.length === 0) {
+      throw new BadRequestException("Ushbu filtrlar bo'yicha bemorlar topilmadi");
+    }
+
+    // Запускаем рассылку В ФОНЕ (без await), чтобы не блокировать HTTP ответ
+    this.processBackgroundBroadcast(patients, dto.text);
+
+    return {
+      success: true,
+      message: "Rassilka boshlandi",
+      targetCount: patients.length,
+    };
+  }
+
+  private async processBackgroundBroadcast(patients: Patient[], text: string) {
+    this.logger.log(`Starting broadcast for ${patients.length} patients...`);
+    let sentCount = 0;
+
+    for (const patient of patients) {
+      try {
+        if (patient.phone) {
+          await this.sendText(patient.phone, text);
+          sentCount++;
+          
+          // 🔥 СЛУЧАЙНАЯ ЗАДЕРЖКА от 3 до 7 секунд (Защита от бана WhatsApp)
+          const delay = Math.floor(Math.random() * 4000) + 3000;
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      } catch (err) {
+        this.logger.error(`Failed to send broadcast to ${patient.phone}: ${err.message}`);
+      }
+    }
+
+    this.logger.log(`Broadcast finished. Successfully sent: ${sentCount}/${patients.length}`);
   }
 
   private async updatePatientStatusToContacted(phone: string) {
