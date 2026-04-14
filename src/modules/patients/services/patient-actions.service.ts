@@ -5,10 +5,11 @@ import {
   BadRequestException,
   Logger,
 } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { DataSource, DeepPartial } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { FilesService } from '../../files/files.service';
 import { TrelloService } from '../../trello/services/trello.service';
+import { v4 as uuidv4 } from 'uuid';
 import { Patient } from '../entities/patient.entity';
 import { PatientStatus } from 'src/common/enums/patient-status.enum';
 import { AddCallStatusDto } from '../../call-history/dto/add-call-status.dto';
@@ -114,26 +115,41 @@ export class PatientActionsService {
       await queryRunner.manager.save(patient);
 
       const evidenceEntities: EvidenceMessage[] = [];
+      const backendUrl = this.configService.get<string>('UPLOAD_URL') || 'http://localhost:3000';
 
       for (const item of dto.evidence) {
+        let buffer: Buffer | null = null;
+        let mimeType: string | null = null;
         let finalUrl = item.mediaUrl;
 
+        // Генерируем уникальный ID заранее
+        const evidenceId = uuidv4();
+
+        // Если прилетел файл (Base64)
         if (item.mediaUrl && item.mediaUrl.startsWith('data:')) {
-          finalUrl = await this.filesService.saveBase64(
-            item.mediaUrl,
-            'evidence',
-          );
+          const matches = item.mediaUrl.match(/^data:(.+);base64,(.+)$/);
+
+          if (matches && matches.length === 3) {
+            mimeType = matches[1];
+            buffer = Buffer.from(matches[2], 'base64');
+
+            // Формируем URL к вашему контроллеру
+            finalUrl = `${backendUrl}/api/feedbacks/evidence/${evidenceId}/file`;
+          }
         }
 
         const evidenceEntity = queryRunner.manager.create(EvidenceMessage, {
+          id: evidenceId,
           type: item.type,
           text: item.text,
           mediaUrl: finalUrl,
+          mediaData: buffer,
+          mimeType: mimeType,
           duration: item.duration,
           source: item.source || EvidenceSource.MANUAL,
           sender: item.sender || 'patient',
           originalTimestamp: item.originalTimestamp || new Date().toISOString(),
-        });
+        } as DeepPartial<EvidenceMessage>);
 
         evidenceEntities.push(evidenceEntity);
       }
@@ -178,13 +194,10 @@ export class PatientActionsService {
     if (!badCategoryKey) badCategoryKey = 'overall';
     const categoryName = this.CATEGORIES_MAP[badCategoryKey] || badCategoryKey;
 
-    // ИСПОЛЬЗУЕМ feedback.evidenceMessages ВМЕСТО dto.evidence
-    // Так как в feedback.evidenceMessages уже лежат короткие ссылки на файлы, а не тяжелый Base64
     const evidenceText = feedback.evidenceMessages.map(e => {
       if (e.type === 'text') return e.text;
       
       const linkLabel = e.type === 'audio' ? '🎵 Эшитиш (Овозли хабар)' : `🔗 Файлни очиш (${e.type})`;
-      // Формат ссылки Trello Markdown: [Название ссылки](URL)
       return e.mediaUrl ? `[${linkLabel}](${e.mediaUrl})` : `[Файл йўқ]`;
     }).join('\n\n');
 
@@ -210,7 +223,6 @@ ${evidenceText}
 
     const labelId = await this.trelloService.getOrCreateBranchLabel(boardId, patient.branch);
     
-    // Если произойдет ошибка (например 400 или 414), она пробросится вверх и отменит транзакцию
     await this.trelloService.createCard(listId, cardTitle, cardDesc, labelId);
     
     this.logger.log(`Trello card created successfully for Feedback: ${feedback.id}`);
@@ -254,11 +266,9 @@ ${evidenceText}
           await queryRunner.manager.delete(CallStatus, lastAction.id);
           this.logger.log(`Reverted: Deleted CallStatus ${lastAction.id}`);
         } else {
-          // ЕСЛИ ЭТО БЫЛА ЖАЛОБА - УДАЛЯЕМ ЕЕ И ИЗ БАЗЫ, И ИЗ TRELLO
           await queryRunner.manager.delete(Feedback, lastAction.id);
           this.logger.log(`Reverted: Deleted Feedback ${lastAction.id}`);
           
-          // Удаляем карточку в Trello
           await this.trelloService.deleteCardByFeedbackId(lastAction.id);
         }
       }
