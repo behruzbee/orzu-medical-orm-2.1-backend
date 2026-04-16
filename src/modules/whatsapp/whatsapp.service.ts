@@ -5,7 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import * as os from 'os';
-import { Client, LocalAuth, MessageMedia } from 'whatsapp-web.js';
+import { Client, LocalAuth, Message, MessageMedia } from 'whatsapp-web.js';
 import { Subject, Observable } from 'rxjs';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Patient } from '../patients/entities/patient.entity';
@@ -122,15 +122,29 @@ export class WhatsappService implements OnModuleInit {
         return [];
       }
 
-      const messages = await chat.fetchMessages({ limit });
-      
+      let messages = [];
+      try {
+        // Пытаемся получить запрошенный лимит (50)
+        messages = await chat.fetchMessages({ limit });
+      } catch (err) {
+        this.logger.warn(`Ошибка скроллинга WhatsApp для ${phone}, пробуем получить последние сообщения без скролла...`);
+        try {
+          // Если ловим баг "waitForChatLoading", ставим минимальный лимит (например, 5-10),
+          // чтобы библиотека отдала то, что уже видит на экране, и не пыталась грузить историю серверов WA.
+          messages = await chat.fetchMessages({ limit: 5 });
+        } catch (fallbackErr) {
+          this.logger.error(`Не удалось получить даже последние 5 сообщений: ${fallbackErr.message}`);
+          return [];
+        }
+      }
+
       if (!messages || messages.length === 0) {
         this.logger.log(`Chat found for ${chatId}, but there are 0 messages in the local cache.`);
         return [];
       }
 
       const formattedMessages = await Promise.all(
-        messages.map(async (msg) => {
+        messages.map(async (msg: Message) => {
           let mediaUrl: string | undefined = undefined;
 
           if (msg.hasMedia) {
