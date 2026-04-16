@@ -98,53 +98,63 @@ export class WhatsappService implements OnModuleInit {
 
   async getChatHistory(phone: string, limit = 50) {
     try {
-      const chatId = this.getChatId(phone);
+      const cleanPhone = phone.replace(/\D/g, '');
+      if (!cleanPhone) throw new BadRequestException('Invalid phone number');
 
       if (!this.client.info) {
         this.logger.warn('WhatsApp client not ready');
         return [];
       }
 
-      const chat = await this.client.getChatById(chatId);
-      const messages = await chat.fetchMessages({ limit });
+      const registeredUser = await this.client.getNumberId(cleanPhone);
+      if (!registeredUser) {
+        this.logger.warn(`Number ${cleanPhone} is NOT registered on WhatsApp.`);
+        return [];
+      }
 
-      // 🔥 ИСПОЛЬЗУЕМ Promise.all, чтобы скачать медиа для каждого сообщения
+      const chatId = registeredUser._serialized; 
+
+      let chat;
+      try {
+        chat = await this.client.getChatById(chatId);
+      } catch (err) {
+        this.logger.error(`Chat for ${chatId} not found in the current local WhatsApp Web session. It might not be synced yet.`);
+        return [];
+      }
+
+      const messages = await chat.fetchMessages({ limit });
+      
+      if (!messages || messages.length === 0) {
+        this.logger.log(`Chat found for ${chatId}, but there are 0 messages in the local cache.`);
+        return [];
+      }
+
       const formattedMessages = await Promise.all(
         messages.map(async (msg) => {
           let mediaUrl: string | undefined = undefined;
 
-          // 1. Если есть медиа, пытаемся его скачать
           if (msg.hasMedia) {
             try {
               const media = await msg.downloadMedia();
               if (media) {
-                // Формируем Data URI (Base64), который понимает браузер
-                // Пример: "data:image/jpeg;base64,/9j/4AAQSkZJRg..."
                 mediaUrl = `data:${media.mimetype};base64,${media.data}`;
               }
             } catch (err) {
-              this.logger.error(
-                `Failed to download media for msg ${msg.id.id}`,
-              );
-              // Если файл старый, WhatsApp может не отдать его, оставляем undefined
+              this.logger.error(`Failed to download media for msg ${msg.id.id}`);
             }
           }
 
           return {
             id: msg.id.id,
             sender: msg.fromMe ? 'operator' : 'patient',
-            text: msg.body, // Текст или подпись к фото
-            type:
-              msg.type === 'ptt' ? 'audio' : msg.hasMedia ? msg.type : 'text',
+            text: msg.body,
+            type: msg.type === 'ptt' ? 'audio' : msg.hasMedia ? msg.type : 'text',
             timestamp: new Date(msg.timestamp * 1000).toLocaleTimeString([], {
               hour: '2-digit',
               minute: '2-digit',
             }),
             status: msg.ack >= 3 ? 'read' : 'sent',
-            duration: msg.duration
-              ? this.formatDuration(Number(msg.duration))
-              : undefined,
-            // 👇 Добавляем ссылку на медиа
+            duration: msg.duration ? this.formatDuration(Number(msg.duration)) : undefined,
             mediaUrl: mediaUrl,
           };
         }),
@@ -152,7 +162,7 @@ export class WhatsappService implements OnModuleInit {
 
       return formattedMessages;
     } catch (e) {
-      this.logger.warn(`Chat not found or error for ${phone}: ${e.message}`);
+      this.logger.error(`Critical error fetching history for ${phone}: ${e.stack}`);
       return [];
     }
   }
@@ -204,10 +214,15 @@ export class WhatsappService implements OnModuleInit {
     }
 
     if (dto.dateFrom && dto.dateTo) {
-      qb.andWhere('patient.departureDate BETWEEN :dateFrom AND :dateTo', { dateFrom: dto.dateFrom, dateTo: dto.dateTo });
-    } else if (dto.dateFrom) {
-      qb.andWhere('patient.departureDate >= :dateFrom', { dateFrom: dto.dateFrom });
-    }
+  qb.andWhere('patient.departureDate BETWEEN :dateFrom::timestamp AND :dateTo::timestamp', { 
+    dateFrom: dto.dateFrom, 
+    dateTo: dto.dateTo 
+  });
+} else if (dto.dateFrom) {
+  qb.andWhere('patient.departureDate >= :dateFrom::timestamp', { 
+    dateFrom: dto.dateFrom 
+  });
+}
 
     // Получаем всех пациентов, подходящих под фильтр
     const patients = await qb.getMany();
