@@ -114,37 +114,37 @@ export class WhatsappService implements OnModuleInit {
 
       const chatId = registeredUser._serialized; 
 
+      try {
+        const page = (this.client as any).pupPage;
+        if (page) {
+          await page.evaluate(() => {
+            if (window['Store'] && typeof window['Store'].waitForChatLoading === 'undefined') {
+              window['Store'].waitForChatLoading = () => new Promise(resolve => setTimeout(resolve, 500));
+            }
+          });
+        }
+      } catch (injectErr) {
+        this.logger.error(`Не удалось внедрить фикс: ${injectErr.message}`);
+      }
+
       let chat;
       try {
         chat = await this.client.getChatById(chatId);
       } catch (err) {
-        this.logger.error(`Chat for ${chatId} not found in the current local WhatsApp Web session. It might not be synced yet.`);
+        this.logger.error(`Chat for ${chatId} not found in the current local session.`);
         return [];
       }
 
-      let messages = [];
-      try {
-        // Пытаемся получить запрошенный лимит (50)
-        messages = await chat.fetchMessages({ limit });
-      } catch (err) {
-        this.logger.warn(`Ошибка скроллинга WhatsApp для ${phone}, пробуем получить последние сообщения без скролла...`);
-        try {
-          // Если ловим баг "waitForChatLoading", ставим минимальный лимит (например, 5-10),
-          // чтобы библиотека отдала то, что уже видит на экране, и не пыталась грузить историю серверов WA.
-          messages = await chat.fetchMessages({ limit: 5 });
-        } catch (fallbackErr) {
-          this.logger.error(`Не удалось получить даже последние 5 сообщений: ${fallbackErr.message}`);
-          return [];
-        }
-      }
-
+      // 🚀 Теперь это сработает без краша!
+      const messages = await chat.fetchMessages({ limit });
+      
       if (!messages || messages.length === 0) {
         this.logger.log(`Chat found for ${chatId}, but there are 0 messages in the local cache.`);
         return [];
       }
 
       const formattedMessages = await Promise.all(
-        messages.map(async (msg: Message) => {
+        messages.map(async (msg) => {
           let mediaUrl: string | undefined = undefined;
 
           if (msg.hasMedia) {
