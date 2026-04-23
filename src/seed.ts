@@ -44,15 +44,15 @@ export async function runSeed(app: INestApplicationContext) {
   //   },
   // ];
 
-  for (const patientDto of initialPatients) {
-    try {
-      await patientsService.createFromExternal(patientDto as any);
-      logger.log(`Patient ${patientDto.name} seeded successfully.`);
-    } catch (error) {
-      if (error.status === 409) {
-        continue;
-      }
-      logger.error(`Error seeding patient ${patientDto.name}: ${error.message}`);
-    }
-  }
+  // for (const patientDto of initialPatients) {
+  //   try {
+  //     await patientsService.createFromExternal(patientDto as any);
+  //     logger.log(`Patient ${patientDto.name} seeded successfully.`);
+  //   } catch (error) {
+  //     if (error.status === 409) {
+  //       continue;
+  //     }
+  //     logger.error(`Error seeding patient ${patientDto.name}: ${error.message}`);
+  //   }
+  // }
 }
