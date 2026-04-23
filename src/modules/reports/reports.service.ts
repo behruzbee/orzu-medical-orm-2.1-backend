@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, In } from 'typeorm'; // Не забудьте импортировать In
+import { Repository, Between, In } from 'typeorm';
 import * as ExcelJS from 'exceljs';
 import { format } from 'date-fns';
 
@@ -33,8 +33,8 @@ export class ReportsService {
     const end = new Date(dto.endDate);
     end.setHours(23, 59, 59, 999);
 
-    // 1. ФИЛЬТРАЦИЯ: Берем пациентов строго по дате приезда (arrivalDate) 
-    // и ИГНОРИРУЕМ всех, кроме указанных финальных статусов
+    // 1. ФИЛЬТРАЦИЯ: Берем пациентов по дате приезда (arrivalDate)
+    // Подтягиваем evidenceMessages, чтобы достать ссылки на файлы
     const patients = await this.patientRepository.find({
       where: {
         arrivalDate: Between(start, end),
@@ -46,7 +46,7 @@ export class ReportsService {
           PatientStatus.FEEDBACK_NEGATIVE,
         ]),
       },
-      relations: ['callHistory', 'feedbacks'],
+      relations: ['callHistory', 'feedbacks', 'feedbacks.evidenceMessages'],
     });
 
     // --- ФОРМАТИРОВАНИЕ ДЛЯ ОТЧЕТА ---
@@ -84,8 +84,8 @@ export class ReportsService {
       'Клиника (5)', 'Клиника (4)', 'Клиника (3)', 'Клиника (2)',
       'Итог (5)', 'Итог (4)', 'Итог (3)', 'Итог (2)',
       'Предложения',
-      'Ссылка (Жалоба)',
-      'Ссылка (Предложение)'
+      'Ссылка (Медиа/Жалоба)',
+      'Ссылка (Медиа/Предложение)'
     ];
 
     const headerRow = worksheet.addRow(header1);
@@ -127,7 +127,7 @@ export class ReportsService {
 
     branchList.forEach((branch, index) => {
       const branchPatients = patients.filter((p) => p.branch === branch);
-      const totalPatients = branchPatients.length; // Это теперь только ТЕ, кого мы отфильтровали
+      const totalPatients = branchPatients.length;
 
       let bNoAnswer = 0, bWrongNumber = 0, bNoConnection = 0, bContacted = 0, bComplaints = 0, bSuggestions = 0;
       const branchOverallScores = { 5: 0, 4: 0, 3: 0, 2: 0 };
@@ -136,9 +136,7 @@ export class ReportsService {
       const suggestionLinks: string[] = []; 
 
       branchPatients.forEach((p) => {
-        const pFeedbacks = p.feedbacks || [];
-
-        // 2. ПОДСЧЕТ: Строго по финальному статусу пациента
+        // ПОДСЧЕТ СТАТУСОВ
         if (p.status === PatientStatus.NO_ANSWER) {
             bNoAnswer++;
         } else if (p.status === PatientStatus.WRONG_NUMBER) {
@@ -149,28 +147,45 @@ export class ReportsService {
             bContacted++;
             if (p.status === PatientStatus.FEEDBACK_NEGATIVE) bComplaints++;
             if (p.status === PatientStatus.FEEDBACK_POSITIVE) bSuggestions++;
-        }
 
-        // Обработка оценок из поля JSON `ratings`
-        if (pFeedbacks.length > 0) {
-            pFeedbacks.forEach(f => {
-                if (f.ratings) {
+            // БЕРЕМ ОЦЕНКИ И ССЫЛКИ ТОЛЬКО ЕСЛИ ДОЗВОНИЛИСЬ
+            if (p.feedbacks && p.feedbacks.length > 0) {
+                // Избегаем дубликатов: берем только последний отзыв
+                const latestFeedback = [...p.feedbacks].sort((a, b) => 
+                    new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+                )[0];
+
+                // --- Извлекаем ссылки на медиа из evidenceMessages ---
+                const mediaLinks = latestFeedback.evidenceMessages
+                    ?.map(ev => ev.mediaUrl)
+                    .filter(url => Boolean(url)) || []; // Оставляем только непустые
+
+                if (mediaLinks.length > 0) {
+                    if (p.status === PatientStatus.FEEDBACK_NEGATIVE) {
+                        complaintLinks.push(...mediaLinks);
+                    } else if (p.status === PatientStatus.FEEDBACK_POSITIVE) {
+                        suggestionLinks.push(...mediaLinks);
+                    }
+                }
+
+                // --- Считаем оценки ---
+                if (latestFeedback.ratings) {
                     categoriesArray.forEach(cat => {
                         // @ts-ignore
-                        const val = f.ratings[cat];
+                        const val = latestFeedback.ratings[cat];
                         if (val && val >= 2 && val <= 5) {
                             const key = `${cat}-${val}`;
                             globalStats.points[key] = (globalStats.points[key] || 0) + 1;
                         }
                     });
 
-                    const overallVal = f.ratings['overall'];
+                    const overallVal = latestFeedback.ratings['overall'];
                     if (overallVal && overallVal >= 2 && overallVal <= 5) {
                         branchOverallScores[overallVal as keyof typeof branchOverallScores]++;
                         globalStats.overallScores[overallVal as keyof typeof globalStats.overallScores]++;
                     }
                 }
-            });
+            }
         }
       });
 
@@ -179,10 +194,15 @@ export class ReportsService {
       const countPoints = (cat: string, val: number) => {
           let count = 0;
           branchPatients.forEach(p => {
-              p.feedbacks?.forEach(f => {
-                  // @ts-ignore
-                  if (f.ratings && f.ratings[cat] === val) count++;
-              });
+              if (p.status === PatientStatus.FEEDBACK_POSITIVE || p.status === PatientStatus.FEEDBACK_NEGATIVE) {
+                  if (p.feedbacks && p.feedbacks.length > 0) {
+                      const latestFeedback = [...p.feedbacks].sort((a, b) => 
+                          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+                      )[0];
+                      // @ts-ignore
+                      if (latestFeedback.ratings && latestFeedback.ratings[cat] === val) count++;
+                  }
+              }
           });
           return count;
       };
@@ -212,8 +232,9 @@ export class ReportsService {
           rowValues[39] = formatCountPct(bSuggestions, bContacted);
         }
 
-        if (complaintLinks[i]) rowValues[40] = { text: `Жалоба-${i+1}`, hyperlink: complaintLinks[i] };
-        if (suggestionLinks[i]) rowValues[41] = { text: `Предложение-${i+1}`, hyperlink: suggestionLinks[i] };
+        // Вставляем ссылки на файлы
+        if (complaintLinks[i]) rowValues[40] = { text: `Файл-${i+1}`, hyperlink: complaintLinks[i] };
+        if (suggestionLinks[i]) rowValues[41] = { text: `Файл-${i+1}`, hyperlink: suggestionLinks[i] };
 
         const row = worksheet.addRow(rowValues);
         
