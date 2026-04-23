@@ -89,12 +89,12 @@ export class PatientsService {
 
     // 4. Фильтр по дате вылета (Departure Date)
     if (dateFrom && dateTo) {
-      qb.andWhere('patient.departureDate BETWEEN :dateFrom AND :dateTo', {
+      qb.andWhere('patient.arrivalDate BETWEEN :dateFrom AND :dateTo', {
         dateFrom,
         dateTo,
       });
     } else if (dateFrom) {
-      qb.andWhere('patient.departureDate >= :dateFrom', { dateFrom });
+      qb.andWhere('patient.arrivalDate >= :dateFrom', { dateFrom });
     }
 
     // 5. Общий поиск (Search input)
