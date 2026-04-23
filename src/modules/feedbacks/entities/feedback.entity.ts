@@ -23,6 +23,9 @@ export class Feedback {
   @Column()
   patientId: string;
 
+  @Column({ nullable: true }) 
+  trelloUrl: string;
+
   @OneToMany(() => EvidenceMessage, (msg) => msg.feedback, { cascade: true })
   evidenceMessages: EvidenceMessage[];
 
