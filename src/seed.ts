@@ -32,17 +32,17 @@ export async function runSeed(app: INestApplicationContext) {
   }
 
   // 2. Сидируем Пациентов
-  const initialPatients = [
-    {
-      name: 'Baxtiyor',
-      phone: '+998975448554',
-      branch: 'Zangiota',
-      departureDate: '2025-12-25T00:00:00.000Z',
-      arrivalDate: '2025-12-20T00:00:00.000Z',
-      status: PatientStatus.NEW,
-      avatarColor: '#2196F3',
-    },
-  ];
+  // const initialPatients = [
+  //   {
+  //     name: 'Baxtiyor',
+  //     phone: '+998975448554',
+  //     branch: 'Zangiota',
+  //     departureDate: '2025-12-25T00:00:00.000Z',
+  //     arrivalDate: '2025-12-20T00:00:00.000Z',
+  //     status: PatientStatus.NEW,
+  //     avatarColor: '#2196F3',
+  //   },
+  // ];
 
   for (const patientDto of initialPatients) {
     try {

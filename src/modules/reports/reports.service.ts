@@ -1,14 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between } from 'typeorm';
+import { Repository, Between, In } from 'typeorm';
 import * as ExcelJS from 'exceljs';
 import { format } from 'date-fns';
 
-import { Report } from './entities/report.entity';
-import { Patient } from '../patients/entities/patient.entity';
-import { GenerateReportDto } from './dto/generate-report.dto';
-import { FilesService } from '../files/files.service';
 import { PatientStatus } from 'src/common/enums/patient-status.enum';
+import { Patient } from 'src/modules/patients/entities/patient.entity';
+import { FilesService } from 'src/modules/files/files.service';
+import { GenerateReportDto } from 'src/modules/reports/dto/generate-report.dto';
+import { Report } from './entities/report.entity';
 
 @Injectable()
 export class ReportsService {
@@ -33,7 +33,7 @@ export class ReportsService {
     const end = new Date(dto.endDate);
     end.setHours(23, 59, 59, 999);
 
-    // 1. Bemorlarni olish
+    // 1. Получаем пациентов в указанном диапазоне выписки (departureDate)
     const patients = await this.patientRepository.find({
       where: {
         departureDate: Between(start, end),
@@ -41,235 +41,254 @@ export class ReportsService {
       relations: ['callHistory', 'feedbacks'],
     });
 
-    // 2. Statistika tuzilmasi
-    type RatingBreakdown = { 
-        5: number; 4: number; 3: number; 2: number; 1: number 
-    };
-
-    interface BranchStats {
-      total: number;
-      contacted: number;
-      noAnswer: number;
-      wrongNumber: number;
-      unreachable: number;
-      
-      // Ratings (Soni)
-      doctors: RatingBreakdown;
-      nurses: RatingBreakdown;
-      food: RatingBreakdown;
-      cleanliness: RatingBreakdown;
-      overall: RatingBreakdown;
-    }
-
-    const initRatings = (): RatingBreakdown => ({ 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 });
-
-    const stats: Record<string, BranchStats> = {};
-    const globalStats: BranchStats = {
-      total: 0, contacted: 0, noAnswer: 0, wrongNumber: 0, unreachable: 0,
-      doctors: initRatings(), nurses: initRatings(), food: initRatings(), cleanliness: initRatings(), overall: initRatings(),
-    };
-
-    const getOrInitBranch = (name: string) => {
-      if (!stats[name]) {
-        stats[name] = {
-          total: 0, contacted: 0, noAnswer: 0, wrongNumber: 0, unreachable: 0,
-          doctors: initRatings(), nurses: initRatings(), food: initRatings(), cleanliness: initRatings(), overall: initRatings(),
-        };
-      }
-      return stats[name];
-    };
-
-    const processRating = (
-        branchStats: BranchStats, 
-        category: keyof BranchStats, 
-        score: number
-    ) => {
-        const s = Math.round(score);
-        if (s >= 1 && s <= 5) {
-            // @ts-ignore
-            branchStats[category][s]++;
-            // @ts-ignore
-            globalStats[category][s]++;
-        }
-    };
-
-    // 3. Hisoblash
-    patients.forEach((p) => {
-      const branch = getOrInitBranch(p.branch || 'Noma\'lum');
-      
-      branch.total++;
-      globalStats.total++;
-
-      const callsInPeriod = p.callHistory.filter(c => {
-        const cDate = new Date(c.createdAt);
-        return cDate >= start && cDate <= end;
-      });
-
-      const hasNoAnswer = callsInPeriod.some(c => c.status === PatientStatus.NO_ANSWER);
-      const hasWrongNumber = callsInPeriod.some(c => c.status === PatientStatus.WRONG_NUMBER);
-      const hasUnreachable = callsInPeriod.some(c => c.status === PatientStatus.UNREACHABLE);
-
-      if (hasNoAnswer) { branch.noAnswer++; globalStats.noAnswer++; }
-      if (hasWrongNumber) { branch.wrongNumber++; globalStats.wrongNumber++; }
-      if (hasUnreachable) { branch.unreachable++; globalStats.unreachable++; }
-
-      if (!hasNoAnswer && !hasWrongNumber && !hasUnreachable) {
-        branch.contacted++;
-        globalStats.contacted++;
-      }
-
-      if (p.feedbacks && p.feedbacks.length > 0) {
-        p.feedbacks.forEach(f => {
-          if (f.ratings) {
-             if (f.ratings.doctors) processRating(branch, 'doctors', f.ratings.doctors);
-             if (f.ratings.nurses) processRating(branch, 'nurses', f.ratings.nurses);
-             if (f.ratings.food) processRating(branch, 'food', f.ratings.food);
-             if (f.ratings.cleanliness) processRating(branch, 'cleanliness', f.ratings.cleanliness);
-             if (f.ratings.overall) processRating(branch, 'overall', f.ratings.overall);
-          }
-        });
-      }
-    });
-
-    // 4. Excel generatsiya
+    // --- ФОРМАТИРОВАНИЕ ДЛЯ ОТЧЕТА ---
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Batafsil Hisobot');
+    const worksheet = workbook.addWorksheet('Отчет');
 
-    // --- Sarlavha (Title) ---
-    // 1-qator: Katta sarlavha
-    const dateRangeStr = `${format(start, 'dd.MM.yyyy')} дан ${format(end, 'dd.MM.yyyy')} гача`;
-    const titleText = `ОРЗУ МЕДИКАЛ клиникаларининг ${dateRangeStr} ётган беморларнинг кайта алокага олинганлар буйича курсаткичлари тугрисида`;
-    
-    worksheet.mergeCells('A1:AM1'); // Kengaytiramiz (AM ustunigacha)
+    const dateRangeStr = `с ${format(start, 'dd.MM.yyyy')} по ${format(end, 'dd.MM.yyyy')}`;
+    const titleText = `ПОКАЗАТЕЛИ ОБРАТНОЙ СВЯЗИ ПО ДАТЕ ВЫПИСКИ ЗА ПЕРИОД ${dateRangeStr}`;
+
+    worksheet.mergeCells('A1:AP1');
     const titleRow = worksheet.getCell('A1');
     titleRow.value = titleText.toUpperCase();
     titleRow.font = { name: 'Times New Roman', size: 12, bold: true };
     titleRow.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
     worksheet.getRow(1).height = 40;
 
-    // 2-qator: MA'LUMOTNOMA
-    worksheet.mergeCells('A2:AM2');
+    worksheet.mergeCells('A2:AP2');
     const subTitleRow = worksheet.getCell('A2');
-    subTitleRow.value = "М А Ъ Л У М О Т Н О М А";
+    subTitleRow.value = 'С П Р А В К А';
     subTitleRow.font = { name: 'Times New Roman', size: 14, bold: true };
     subTitleRow.alignment = { vertical: 'middle', horizontal: 'center' };
     worksheet.getRow(2).height = 25;
 
-    // 3-qator: Bo'sh joy
-    worksheet.addRow([]); 
+    worksheet.addRow([]);
 
-    // --- Header ---
-    const headerRowValues = [
-        'Filial', 
-        'Kelgan Bemorlar', 
-        "Bog'lanildi (Soni)", 
-        "Bog'lanildi (%)", 
-        "Ko'tarmadi", 
-        "Noto'g'ri raqam", 
-        "O'chirilgan", 
-        "Jami (Nogiron)", 
-        "Jami (%)", 
-        
-        // Soni
-        'Vrachlar (5)', 'Vrachlar (4)', 'Vrachlar (3)', 'Vrachlar (2)', 'Vrachlar (1)',
-        'Hamshiralar (5)', 'Hamshiralar (4)', 'Hamshiralar (3)', 'Hamshiralar (2)', 'Hamshiralar (1)',
-        'Taomlar (5)', 'Taomlar (4)', 'Taomlar (3)', 'Taomlar (2)', 'Taomlar (1)',
-        'Tozalik (5)', 'Tozalik (4)', 'Tozalik (3)', 'Tozalik (2)', 'Tozalik (1)',
-        'Umumiy (5)', 'Umumiy (4)', 'Umumiy (3)', 'Umumiy (2)', 'Umumiy (1)',
-        
-        // Yangi: Foizlar (Jami bemorga nisbatan)
-        'Umumiy % (5)', 'Umumiy % (4)', 'Umumiy % (3)', 'Umumiy % (2)', 'Umumiy % (1)'
+    const header1 = [
+      '№', 'Филиал', 'Всего пациентов', 'Дозвонились', '% Дозвона', 
+      'Нет ответа', 'Неверный номер', 'Нет связи', 'Всего не дозвонились', '% Недозвона',
+      'Жалобы',
+      'Врачи (5)', 'Врачи (4)', 'Врачи (3)', 'Врачи (2)',
+      'Медсестры (5)', 'Медсестры (4)', 'Медсестры (3)', 'Медсестры (2)',
+      'Санитарки (5)', 'Санитарки (4)', 'Санитарки (3)', 'Санитарки (2)',
+      'Кухня (5)', 'Кухня (4)', 'Кухня (3)', 'Кухня (2)',
+      'Ресепшн (5)', 'Ресепшн (4)', 'Ресепшн (3)', 'Ресепшн (2)',
+      'Клиника (5)', 'Клиника (4)', 'Клиника (3)', 'Клиника (2)',
+      'Итог (5)', 'Итог (4)', 'Итог (3)', 'Итог (2)',
+      'Предложения',
+      'Ссылка (Жалоба)',
+      'Ссылка (Предложение)'
     ];
 
-    const hRow = worksheet.addRow(headerRowValues);
-    hRow.height = 60; // Header balandroq bo'lishi kerak
-    
-    hRow.eachCell((cell, colNumber) => {
-        cell.font = { bold: true, color: { argb: 'FFFFFF' }, size: 9, name: 'Times New Roman' };
-        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-        cell.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
-
-        // Ranglar
-        if (colNumber <= 9) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '4472C4' } }; // Ko'k
-        else if (colNumber <= 14) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'ED7D31' } }; // Vrach
-        else if (colNumber <= 19) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '70AD47' } }; // Hamshira
-        else if (colNumber <= 24) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC000' } }; // Taom
-        else if (colNumber <= 29) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '5B9BD5' } }; // Tozalik
-        else if (colNumber <= 34) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'A5A5A5' } }; // Umumiy
-        else cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '000000' } }; // Foizlar (Qora)
+    const headerRow = worksheet.addRow(header1);
+    headerRow.font = { bold: true };
+    headerRow.eachCell((cell) => {
+      cell.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'D9D9D9' } };
     });
 
-    // Helper: 0 ni bo'sh stringga aylantirish
-    const fmt = (val: number) => val === 0 ? '' : val;
-    const fmtPct = (val: number, total: number) => {
-        if (total === 0 || val === 0) return '';
-        return ((val / total) * 100).toFixed(1) + '%';
+    const globalStats = {
+      totalPatients: 0, contactedCount: 0, noAnswer: 0, wrongNumber: 0, noConnection: 0,
+      notContactedTotal: 0, complaints: 0, suggestions: 0,
+      points: {} as Record<string, number>,
+      overallScores: { 5: 0, 4: 0, 3: 0, 2: 0 }
     };
 
-    const createRowData = (name: string, s: BranchStats) => {
-        const totalNegative = s.noAnswer + s.wrongNumber + s.unreachable;
-
-        return [
-            name,
-            fmt(s.total),
-            fmt(s.contacted),
-            fmtPct(s.contacted, s.total),
-            fmt(s.noAnswer),
-            fmt(s.wrongNumber),
-            fmt(s.unreachable),
-            fmt(totalNegative),
-            fmtPct(totalNegative, s.total),
-
-            // Vrachlar
-            fmt(s.doctors[5]), fmt(s.doctors[4]), fmt(s.doctors[3]), fmt(s.doctors[2]), fmt(s.doctors[1]),
-            // Hamshiralar
-            fmt(s.nurses[5]), fmt(s.nurses[4]), fmt(s.nurses[3]), fmt(s.nurses[2]), fmt(s.nurses[1]),
-            // Taomlar
-            fmt(s.food[5]), fmt(s.food[4]), fmt(s.food[3]), fmt(s.food[2]), fmt(s.food[1]),
-            // Tozalik
-            fmt(s.cleanliness[5]), fmt(s.cleanliness[4]), fmt(s.cleanliness[3]), fmt(s.cleanliness[2]), fmt(s.cleanliness[1]),
-            // Umumiy (Soni)
-            fmt(s.overall[5]), fmt(s.overall[4]), fmt(s.overall[3]), fmt(s.overall[2]), fmt(s.overall[1]),
-            
-            // Umumiy (Foiz - Jami bemorlar soniga nisbatan)
-            fmtPct(s.overall[5], s.total),
-            fmtPct(s.overall[4], s.total),
-            fmtPct(s.overall[3], s.total),
-            fmtPct(s.overall[2], s.total),
-            fmtPct(s.overall[1], s.total),
-        ];
+    const formatCountPct = (count: number, totalBase: number): string => {
+        if (totalBase === 0 || count === 0) return '0 (0.0%)';
+        const pct = (count / totalBase) * 100;
+        return `${count} (${pct.toFixed(1)}%)`;
     };
 
-    // Filiallar
-    Object.entries(stats).forEach(([name, s]) => {
-        const row = worksheet.addRow(createRowData(name, s));
-        row.eachCell(cell => {
-            cell.alignment = { horizontal: 'center', vertical: 'middle' };
-            cell.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
-            cell.font = { name: 'Times New Roman', size: 10 };
+    // Получаем уникальный список филиалов из новых пациентов
+    const branchList = [...new Set(patients.map(p => p.branch).filter(Boolean))];
+
+    // Маппинг новых категорий из JSON `ratings` на старые названия для подсчета
+    const categoryMap = {
+      doctors: 'doctors',
+      nurses: 'nurses',
+      cleanliness: 'cleanliness', // бывшие Санитарки
+      food: 'food',               // бывшая Кухня
+      reception: 'reception',
+      clinic: 'clinic'
+    };
+
+    const categoriesArray = [
+      categoryMap.doctors, categoryMap.nurses, categoryMap.cleanliness, 
+      categoryMap.food, categoryMap.reception, categoryMap.clinic
+    ];
+
+    branchList.forEach((branch, index) => {
+      const branchPatients = patients.filter((p) => p.branch === branch);
+      const totalPatients = branchPatients.length;
+
+      let bNoAnswer = 0, bWrongNumber = 0, bNoConnection = 0, bContacted = 0, bComplaints = 0, bSuggestions = 0;
+      const branchOverallScores = { 5: 0, 4: 0, 3: 0, 2: 0 };
+      
+      const complaintLinks: string[] = []; // Оставляем массивы для совместимости со старым кодом
+      const suggestionLinks: string[] = []; 
+
+      branchPatients.forEach((p) => {
+        const pFeedbacks = p.feedbacks || [];
+        const pCalls = p.callHistory || [];
+
+        // В новом коде статусы звонков хранятся в callHistory
+        const callStatuses = pCalls.map(c => c.status);
+        let isBad = false;
+        let badType: PatientStatus | null = null;
+
+        if (callStatuses.includes(PatientStatus.WRONG_NUMBER)) { badType = PatientStatus.WRONG_NUMBER; isBad = true; }
+        else if (callStatuses.includes(PatientStatus.UNREACHABLE)) { badType = PatientStatus.UNREACHABLE; isBad = true; }
+        else if (callStatuses.includes(PatientStatus.NO_ANSWER)) { badType = PatientStatus.NO_ANSWER; isBad = true; }
+
+        if (pFeedbacks.length > 0) {
+            bContacted++;
+        } else if (isBad) {
+            if (badType === PatientStatus.WRONG_NUMBER) bWrongNumber++;
+            else if (badType === PatientStatus.UNREACHABLE) bNoConnection++; // В старом было NO_CONNECTION
+            else if (badType === PatientStatus.NO_ANSWER) bNoAnswer++;
+        } else if (p.status !== PatientStatus.NEW) {
+            bContacted++;
+        }
+
+        // Подсчет жалоб и предложений через новые статусы (либо наличие комментариев/оценок)
+        if (p.status === PatientStatus.FEEDBACK_NEGATIVE) bComplaints++;
+        if (p.status === PatientStatus.FEEDBACK_POSITIVE) bSuggestions++;
+
+        // Обработка оценок из нового поля JSON `ratings`
+        if (pFeedbacks.length > 0) {
+            pFeedbacks.forEach(f => {
+                if (f.ratings) {
+                    categoriesArray.forEach(cat => {
+                        // @ts-ignore
+                        const val = f.ratings[cat];
+                        if (val && val >= 2 && val <= 5) {
+                            const key = `${cat}-${val}`;
+                            globalStats.points[key] = (globalStats.points[key] || 0) + 1;
+                        }
+                    });
+
+                    // Итог (overall)
+                    const overallVal = f.ratings['overall'];
+                    if (overallVal && overallVal >= 2 && overallVal <= 5) {
+                        branchOverallScores[overallVal as keyof typeof branchOverallScores]++;
+                        globalStats.overallScores[overallVal as keyof typeof globalStats.overallScores]++;
+                    }
+                }
+            });
+        }
+      });
+
+      const notContactedTotal = bNoAnswer + bWrongNumber + bNoConnection;
+      
+      const countPoints = (cat: string, val: number) => {
+          // Высчитываем локальное количество оценок для филиала, 
+          // пробегаясь по рейтингам пациентов текущего филиала
+          let count = 0;
+          branchPatients.forEach(p => {
+              p.feedbacks?.forEach(f => {
+                  // @ts-ignore
+                  if (f.ratings && f.ratings[cat] === val) count++;
+              });
+          });
+          return count;
+      };
+
+      const maxRows = Math.max(complaintLinks.length, suggestionLinks.length, 1);
+      // @ts-ignore
+      const startRowNumber = worksheet.lastRow.number + 1;
+
+      for (let i = 0; i < maxRows; i++) {
+        const rowValues = Array(42).fill(null);
+        if (i === 0) {
+          rowValues[0] = index + 1; rowValues[1] = branch; rowValues[2] = totalPatients;
+          rowValues[3] = bContacted; rowValues[4] = totalPatients > 0 ? bContacted / totalPatients : 0;
+          rowValues[5] = bNoAnswer; rowValues[6] = bWrongNumber; rowValues[7] = bNoConnection;
+          rowValues[8] = notContactedTotal; rowValues[9] = totalPatients > 0 ? notContactedTotal / totalPatients : 0;
+          rowValues[10] = bComplaints;
+          
+          let col = 11;
+          categoriesArray.forEach(cat => {
+            [5, 4, 3, 2].forEach(v => { rowValues[col++] = countPoints(cat, v); });
+          });
+
+          rowValues[35] = formatCountPct(branchOverallScores[5], bContacted);
+          rowValues[36] = formatCountPct(branchOverallScores[4], bContacted);
+          rowValues[37] = formatCountPct(branchOverallScores[3], bContacted);
+          rowValues[38] = formatCountPct(branchOverallScores[2], bContacted);
+          rowValues[39] = formatCountPct(bSuggestions, bContacted);
+        }
+
+        if (complaintLinks[i]) rowValues[40] = { text: `Жалоба-${i+1}`, hyperlink: complaintLinks[i] };
+        if (suggestionLinks[i]) rowValues[41] = { text: `Предложение-${i+1}`, hyperlink: suggestionLinks[i] };
+
+        const row = worksheet.addRow(rowValues);
+        
+        if (i === 0) {
+            row.getCell(5).numFmt = '0.0%';
+            row.getCell(10).numFmt = '0.0%';
+        }
+
+        row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+          cell.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
+          cell.alignment = { horizontal: 'center', vertical: 'middle' };
+          if (colNumber >= 41 && cell.value) cell.font = { color: { argb: '0000FF' }, underline: true };
+          if (cell.value === 0 || cell.value === '0 (0.0%)') cell.value = '';
         });
+      }
+
+      if (maxRows > 1) {
+        for (let col = 1; col <= 40; col++) {
+          worksheet.mergeCells(startRowNumber, col, startRowNumber + maxRows - 1, col);
+        }
+      }
+
+      globalStats.totalPatients += totalPatients; globalStats.contactedCount += bContacted;
+      globalStats.noAnswer += bNoAnswer; globalStats.wrongNumber += bWrongNumber;
+      globalStats.noConnection += bNoConnection; globalStats.notContactedTotal += notContactedTotal;
+      globalStats.complaints += bComplaints; globalStats.suggestions += bSuggestions;
     });
 
-    // JAMI
-    const totalRow = worksheet.addRow(createRowData('JAMI', globalStats));
-    totalRow.height = 25;
-    totalRow.eachCell(cell => {
-        cell.font = { bold: true, name: 'Times New Roman', size: 10 };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'D9D9D9' } };
-        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    // --- ИТОГО ---
+    const gPctContacted = globalStats.totalPatients > 0 ? globalStats.contactedCount / globalStats.totalPatients : 0;
+    const gPctNotContacted = globalStats.totalPatients > 0 ? globalStats.notContactedTotal / globalStats.totalPatients : 0;
+    const getG = (cat: string, val: number) => globalStats.points[`${cat}-${val}`] || 0;
+
+    const totalRowValues = [
+        'ИТОГО', '', globalStats.totalPatients, globalStats.contactedCount, gPctContacted,
+        globalStats.noAnswer, globalStats.wrongNumber, globalStats.noConnection, globalStats.notContactedTotal, gPctNotContacted,
+        globalStats.complaints,
+        ...categoriesArray.flatMap(cat => 
+          [5, 4, 3, 2].map(v => getG(cat, v))
+        ),
+        formatCountPct(globalStats.overallScores[5], globalStats.contactedCount), formatCountPct(globalStats.overallScores[4], globalStats.contactedCount),
+        formatCountPct(globalStats.overallScores[3], globalStats.contactedCount), formatCountPct(globalStats.overallScores[2], globalStats.contactedCount),
+        formatCountPct(globalStats.suggestions, globalStats.contactedCount),
+    ];
+
+    const totalRow = worksheet.addRow(totalRowValues);
+    worksheet.mergeCells(`A${totalRow.number}:B${totalRow.number}`);
+    totalRow.getCell(5).numFmt = '0.0%'; totalRow.getCell(10).numFmt = '0.0%';
+    totalRow.font = { bold: true };
+    totalRow.eachCell((cell) => {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'BFBFBF' } };
         cell.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
+        cell.alignment = { horizontal: 'center' };
+        if (cell.value === 0 || cell.value === '0 (0.0%)') cell.value = '';
     });
 
-    // Ustun kengliklari
-    worksheet.getColumn(1).width = 25; // Filial
-    for(let i=2; i<=40; i++) {
-        worksheet.getColumn(i).width = 8; // Raqamlar uchun kichik
-    }
+    worksheet.columns.forEach((col, i) => { 
+        if (i === 1) col.width = 20; else if (i >= 40) col.width = 25; else if (i >= 35) col.width = 13; else col.width = 8; 
+    });
 
-    // Saqlash
+    // 4. Сохранение файла с использованием нового FilesService
     const uint8Array = await workbook.xlsx.writeBuffer();
     const buffer = Buffer.from(uint8Array);
-    const fileName = `Hisobot_${format(start, 'dd.MM.yyyy')}-${format(end, 'dd.MM.yyyy')}_${Date.now()}.xlsx`;
+    
+    // Генерируем название в зависимости от нового подхода
+    const fileName = `Отчет_${format(start, 'dd.MM.yyyy')}-${format(end, 'dd.MM.yyyy')}_${Date.now()}.xlsx`;
+    
     const fileUrl = await this.filesService.saveBuffer(buffer, fileName, 'reports');
 
     const report = this.reportRepository.create({
@@ -277,7 +296,7 @@ export class ReportsService {
       fileUrl: fileUrl,
       startDate: start,
       endDate: end,
-      status: 'ready',
+      status: 'ready', // или любой статус, принятый в вашей системе
     });
 
     return this.reportRepository.save(report);

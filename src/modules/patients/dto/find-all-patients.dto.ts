@@ -24,7 +24,7 @@ export class FindAllPatientsDto {
 
   @IsOptional()
   @IsString()
-  search?: string; // Общий поиск (имя или телефон)
+  search?: string; 
 
   @IsOptional()
   @IsEnum(PatientStatus)
@@ -32,7 +32,7 @@ export class FindAllPatientsDto {
 
   @IsOptional()
   @IsString()
-  branch?: string; // Филиал
+  branch?: string; 
 
   @IsOptional()
   @IsString()
