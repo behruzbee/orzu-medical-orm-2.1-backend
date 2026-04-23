@@ -1,14 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, In } from 'typeorm';
+import { Repository, Between, In } from 'typeorm'; // Не забудьте импортировать In
 import * as ExcelJS from 'exceljs';
 import { format } from 'date-fns';
 
-import { PatientStatus } from 'src/common/enums/patient-status.enum';
-import { Patient } from 'src/modules/patients/entities/patient.entity';
-import { FilesService } from 'src/modules/files/files.service';
-import { GenerateReportDto } from 'src/modules/reports/dto/generate-report.dto';
 import { Report } from './entities/report.entity';
+import { Patient } from '../patients/entities/patient.entity';
+import { GenerateReportDto } from './dto/generate-report.dto';
+import { FilesService } from '../files/files.service';
+import { PatientStatus } from 'src/common/enums/patient-status.enum';
 
 @Injectable()
 export class ReportsService {
@@ -24,7 +24,7 @@ export class ReportsService {
 
   async findAll() {
     return this.reportRepository.find({
-      order: { createdAt: 'DESC' },
+      order: { createdAt: 'DESC' }, 
     });
   }
 
@@ -33,10 +33,18 @@ export class ReportsService {
     const end = new Date(dto.endDate);
     end.setHours(23, 59, 59, 999);
 
-    // 1. Получаем пациентов в указанном диапазоне выписки (departureDate)
+    // 1. ФИЛЬТРАЦИЯ: Берем пациентов строго по дате приезда (arrivalDate) 
+    // и ИГНОРИРУЕМ всех, кроме указанных финальных статусов
     const patients = await this.patientRepository.find({
       where: {
-        departureDate: Between(start, end),
+        arrivalDate: Between(start, end),
+        status: In([
+          PatientStatus.NO_ANSWER,
+          PatientStatus.WRONG_NUMBER,
+          PatientStatus.UNREACHABLE,
+          PatientStatus.FEEDBACK_POSITIVE,
+          PatientStatus.FEEDBACK_NEGATIVE,
+        ]),
       },
       relations: ['callHistory', 'feedbacks'],
     });
@@ -46,7 +54,7 @@ export class ReportsService {
     const worksheet = workbook.addWorksheet('Отчет');
 
     const dateRangeStr = `с ${format(start, 'dd.MM.yyyy')} по ${format(end, 'dd.MM.yyyy')}`;
-    const titleText = `ПОКАЗАТЕЛИ ОБРАТНОЙ СВЯЗИ ПО ДАТЕ ВЫПИСКИ ЗА ПЕРИОД ${dateRangeStr}`;
+    const titleText = `ПОКАЗАТЕЛИ ОБРАТНОЙ СВЯЗИ ПО ДАТЕ ЗАЕЗДА ЗА ПЕРИОД ${dateRangeStr}`;
 
     worksheet.mergeCells('A1:AP1');
     const titleRow = worksheet.getCell('A1');
@@ -101,15 +109,13 @@ export class ReportsService {
         return `${count} (${pct.toFixed(1)}%)`;
     };
 
-    // Получаем уникальный список филиалов из новых пациентов
     const branchList = [...new Set(patients.map(p => p.branch).filter(Boolean))];
 
-    // Маппинг новых категорий из JSON `ratings` на старые названия для подсчета
     const categoryMap = {
       doctors: 'doctors',
       nurses: 'nurses',
-      cleanliness: 'cleanliness', // бывшие Санитарки
-      food: 'food',               // бывшая Кухня
+      cleanliness: 'cleanliness', 
+      food: 'food',               
       reception: 'reception',
       clinic: 'clinic'
     };
@@ -121,42 +127,31 @@ export class ReportsService {
 
     branchList.forEach((branch, index) => {
       const branchPatients = patients.filter((p) => p.branch === branch);
-      const totalPatients = branchPatients.length;
+      const totalPatients = branchPatients.length; // Это теперь только ТЕ, кого мы отфильтровали
 
       let bNoAnswer = 0, bWrongNumber = 0, bNoConnection = 0, bContacted = 0, bComplaints = 0, bSuggestions = 0;
       const branchOverallScores = { 5: 0, 4: 0, 3: 0, 2: 0 };
       
-      const complaintLinks: string[] = []; // Оставляем массивы для совместимости со старым кодом
+      const complaintLinks: string[] = []; 
       const suggestionLinks: string[] = []; 
 
       branchPatients.forEach((p) => {
         const pFeedbacks = p.feedbacks || [];
-        const pCalls = p.callHistory || [];
 
-        // В новом коде статусы звонков хранятся в callHistory
-        const callStatuses = pCalls.map(c => c.status);
-        let isBad = false;
-        let badType: PatientStatus | null = null;
-
-        if (callStatuses.includes(PatientStatus.WRONG_NUMBER)) { badType = PatientStatus.WRONG_NUMBER; isBad = true; }
-        else if (callStatuses.includes(PatientStatus.UNREACHABLE)) { badType = PatientStatus.UNREACHABLE; isBad = true; }
-        else if (callStatuses.includes(PatientStatus.NO_ANSWER)) { badType = PatientStatus.NO_ANSWER; isBad = true; }
-
-        if (pFeedbacks.length > 0) {
+        // 2. ПОДСЧЕТ: Строго по финальному статусу пациента
+        if (p.status === PatientStatus.NO_ANSWER) {
+            bNoAnswer++;
+        } else if (p.status === PatientStatus.WRONG_NUMBER) {
+            bWrongNumber++;
+        } else if (p.status === PatientStatus.UNREACHABLE) {
+            bNoConnection++;
+        } else if (p.status === PatientStatus.FEEDBACK_POSITIVE || p.status === PatientStatus.FEEDBACK_NEGATIVE) {
             bContacted++;
-        } else if (isBad) {
-            if (badType === PatientStatus.WRONG_NUMBER) bWrongNumber++;
-            else if (badType === PatientStatus.UNREACHABLE) bNoConnection++; // В старом было NO_CONNECTION
-            else if (badType === PatientStatus.NO_ANSWER) bNoAnswer++;
-        } else if (p.status !== PatientStatus.NEW) {
-            bContacted++;
+            if (p.status === PatientStatus.FEEDBACK_NEGATIVE) bComplaints++;
+            if (p.status === PatientStatus.FEEDBACK_POSITIVE) bSuggestions++;
         }
 
-        // Подсчет жалоб и предложений через новые статусы (либо наличие комментариев/оценок)
-        if (p.status === PatientStatus.FEEDBACK_NEGATIVE) bComplaints++;
-        if (p.status === PatientStatus.FEEDBACK_POSITIVE) bSuggestions++;
-
-        // Обработка оценок из нового поля JSON `ratings`
+        // Обработка оценок из поля JSON `ratings`
         if (pFeedbacks.length > 0) {
             pFeedbacks.forEach(f => {
                 if (f.ratings) {
@@ -169,7 +164,6 @@ export class ReportsService {
                         }
                     });
 
-                    // Итог (overall)
                     const overallVal = f.ratings['overall'];
                     if (overallVal && overallVal >= 2 && overallVal <= 5) {
                         branchOverallScores[overallVal as keyof typeof branchOverallScores]++;
@@ -183,8 +177,6 @@ export class ReportsService {
       const notContactedTotal = bNoAnswer + bWrongNumber + bNoConnection;
       
       const countPoints = (cat: string, val: number) => {
-          // Высчитываем локальное количество оценок для филиала, 
-          // пробегаясь по рейтингам пациентов текущего филиала
           let count = 0;
           branchPatients.forEach(p => {
               p.feedbacks?.forEach(f => {
@@ -282,13 +274,11 @@ export class ReportsService {
         if (i === 1) col.width = 20; else if (i >= 40) col.width = 25; else if (i >= 35) col.width = 13; else col.width = 8; 
     });
 
-    // 4. Сохранение файла с использованием нового FilesService
+    // 4. Сохранение файла
     const uint8Array = await workbook.xlsx.writeBuffer();
     const buffer = Buffer.from(uint8Array);
     
-    // Генерируем название в зависимости от нового подхода
     const fileName = `Отчет_${format(start, 'dd.MM.yyyy')}-${format(end, 'dd.MM.yyyy')}_${Date.now()}.xlsx`;
-    
     const fileUrl = await this.filesService.saveBuffer(buffer, fileName, 'reports');
 
     const report = this.reportRepository.create({
@@ -296,7 +286,7 @@ export class ReportsService {
       fileUrl: fileUrl,
       startDate: start,
       endDate: end,
-      status: 'ready', // или любой статус, принятый в вашей системе
+      status: 'ready', 
     });
 
     return this.reportRepository.save(report);
