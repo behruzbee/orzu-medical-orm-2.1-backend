@@ -63,7 +63,7 @@ export class TrelloService {
     return newLabel ? newLabel.id : null;
   }
 
-  // --- МЕТОДЫ УПРАВЛЕНИЯ КАРТОЧКАМИ ---
+  // --- МЕТОДЫ УПРАВЛЕНИЯ КАРТОЧКАМИ И КОММЕНТАРИЯМИ ---
   async createCard(listId: string, name: string, description: string, labelId?: string | null) {
     try {
       const body: any = { idList: listId, name: name, desc: description, pos: 'top' };
@@ -96,7 +96,6 @@ export class TrelloService {
     }
   }
 
-  // Дублирование карточки (на новую доску/колонку)
   private async duplicateCard(sourceCardId: string, targetListId: string) {
     try {
       const response = await axios.post(`${this.baseUrl}/cards`, null, {
@@ -114,7 +113,6 @@ export class TrelloService {
     }
   }
 
-  // Вернуть карточку обратно (если нет прав)
   private async moveCard(cardId: string, listId: string) {
     await axios.put(`${this.baseUrl}/cards/${cardId}`, 
       { idList: listId, pos: 'top' }, 
@@ -122,12 +120,35 @@ export class TrelloService {
     );
   }
 
-  // Получить полную информацию о карточке (описание)
   private async getCardDetails(cardId: string) {
     const res = await axios.get(`${this.baseUrl}/cards/${cardId}`, {
       params: { key: this.apiKey, token: this.apiToken }
     });
     return res.data;
+  }
+
+  // НОВЫЙ МЕТОД: Получение количества комментариев
+  private async getCardCommentsCount(cardId: string): Promise<number> {
+    try {
+      const response = await axios.get(`${this.baseUrl}/cards/${cardId}/actions`, {
+        params: { filter: 'commentCard', key: this.apiKey, token: this.apiToken },
+      });
+      return response.data.length;
+    } catch (error) {
+      this.logger.error(`Ошибка при получении комментариев: ${error.message}`);
+      return 0; // В случае ошибки считаем, что комментариев нет, чтобы предотвратить перенос
+    }
+  }
+
+  // НОВЫЙ МЕТОД: Добавление комментария от лица системы (бота)
+  private async addCommentToCard(cardId: string, text: string) {
+    try {
+      await axios.post(`${this.baseUrl}/cards/${cardId}/actions/comments`, null, {
+        params: { text: text, key: this.apiKey, token: this.apiToken },
+      });
+    } catch (error) {
+      this.logger.error(`Ошибка при добавлении комментария бота: ${error.message}`);
+    }
   }
 
   // --- ОБРАБОТЧИК WEBHOOK-СОБЫТИЙ ---
@@ -145,24 +166,57 @@ export class TrelloService {
     const memberUsername = action.memberCreator.username;
     const memberFullName = action.memberCreator.fullName;
 
-    const RESTRICTED_LISTS = [
-      this.configService.get('TRELLO_LIST_COMPLETED'),
-      this.configService.get('TRELLO_LIST_SUGGESTIONS'),
-      this.configService.get('TRELLO_LIST_NOT_RELATED'),
-    ];
+    // ID колонок, для которых требуются комментарии
+    const resolvedListId = this.configService.get('TRELLO_LIST_RESOLVED');
+    const unresolvedListId = this.configService.get('TRELLO_LIST_UNRESOLVED');
+
+    // 1. Формируем "Белый список" колонок, доступных ВСЕМ пользователям
+    const ALLOWED_LISTS = [
+      this.configService.get('TRELLO_LIST_NEW_COMPLAINTS'),
+      this.configService.get('TRELLO_LIST_ACCEPTED'),
+      this.configService.get('TRELLO_LIST_IN_PROGRESS'),
+      resolvedListId,
+      unresolvedListId,
+    ].filter(Boolean);
 
     const adminsStr = this.configService.get('TRELLO_ADMIN_USERNAMES') || '';
-    const admins = adminsStr.split(',').map(u => u.trim());
+    const admins = adminsStr.split(',').map(u => u.trim().toLowerCase());
+    const isUserAdmin = admins.includes(memberUsername.toLowerCase());
 
-    // 1. ПРОВЕРКА ПРАВ (SECURITY)
-    if (RESTRICTED_LISTS.includes(listAfterId) && !admins.includes(memberUsername)) {
-      this.logger.warn(`Пользователь ${memberUsername} пытался перенести карточку в ${listAfterName}. Отказ.`);
-      await this.moveCard(cardId, listBeforeId);
-      await this.telegramService.sendSecurityAlert(memberFullName, cardName, listAfterName);
+    // 2. ПРОВЕРКА ПРАВ ДОСТУПА К КОЛОНКАМ (SECURITY)
+    if (!ALLOWED_LISTS.includes(listAfterId) && !isUserAdmin) {
+      this.logger.warn(`🚨 Пользователь ${memberUsername} пытался перенести карточку в защищенный список "${listAfterName}". Отказ.`);
+      try {
+        await this.moveCard(cardId, listBeforeId);
+        await this.telegramService.sendSecurityAlert(memberFullName, cardName, listAfterName);
+      } catch (error) {
+        this.logger.error(`Ошибка при возврате карточки обратно: ${error.message}`);
+      }
       return; 
     }
 
-    // 2. ЛОГИКА "ПРЕДЛОЖЕНИЯ"
+    // 3. ПРОВЕРКА НАЛИЧИЯ КОММЕНТАРИЕВ ДЛЯ "РЕШЕНО" И "НЕ РЕШЕНО"
+    if (listAfterId === resolvedListId || listAfterId === unresolvedListId) {
+      const commentsCount = await this.getCardCommentsCount(cardId);
+      
+      if (commentsCount === 0) {
+        this.logger.warn(`⚠️ Попытка закрыть карточку "${cardName}" без комментария. Отказ.`);
+        
+        try {
+          // Возвращаем карточку обратно в предыдущую колонку
+          await this.moveCard(cardId, listBeforeId);
+          
+          // Оставляем комментарий в карточке с пояснением
+          const botMessage = `⚠️ @${memberUsername}, перенос отменен! Чтобы перевести карточку в статус "${listAfterName}", необходимо добавить хотя бы один комментарий с пояснением или итогом работы.`;
+          await this.addCommentToCard(cardId, botMessage);
+        } catch (error) {
+          this.logger.error(`Ошибка при обработке отсутствия комментария: ${error.message}`);
+        }
+        return; // Обязательно прерываем выполнение, чтобы не сработала логика ниже
+      }
+    }
+
+    // 4. ЛОГИКА "ПРЕДЛОЖЕНИЯ" 
     const suggestionsListId = this.configService.get('TRELLO_LIST_SUGGESTIONS');
     if (listAfterId === suggestionsListId) {
       await this.handleMovedToSuggestions(cardId);
@@ -208,7 +262,7 @@ export class TrelloService {
         await queryRunner.release();
       }
 
-      // 2. Дублирование на другую доску (если указан TRELLO_LIST_SUGGESTIONS_COPY)
+      // 2. Дублирование на другую доску
       const targetListId = this.configService.get<string>('TRELLO_LIST_SUGGESTIONS_COPY');
       if (targetListId) {
         await this.duplicateCard(cardId, targetListId);
