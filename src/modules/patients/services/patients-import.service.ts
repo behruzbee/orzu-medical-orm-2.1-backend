@@ -23,9 +23,17 @@ export class PatientsImportService {
       const workbook = xlsx.read(buffer, { type: 'buffer', cellDates: true });
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
-      const rows = xlsx.utils.sheet_to_json<any[]>(sheet, { header: 1, defval: '', raw: false });
+      const rows = xlsx.utils.sheet_to_json<any[]>(sheet, {
+        header: 1,
+        defval: '',
+        raw: false,
+      });
 
       if (rows.length < 2) {
+        this.logger.warn('⚠️ Файл содержит слишком мало строк для импорта', {
+          rowsCount: rows.length,
+          rows,
+        });
         throw new BadRequestException('Файл пустой или нет данных');
       }
 
@@ -37,17 +45,23 @@ export class PatientsImportService {
       // 0. Извлекаем глобальное название филиала из заголовка документа
       let globalBranchName = "Noma'lum";
       for (let i = 0; i < Math.min(5, rows.length); i++) {
-        const rowText = rows[i].map(cell => String(cell || '').trim()).join(' ');
+        const rowText = rows[i]
+          .map((cell) => String(cell || '').trim())
+          .join(' ');
         const match = rowText.match(/["«“”]([^"»“”]+)["»“”]/);
         if (match && match[1]) {
-          globalBranchName = match[1].trim(); 
+          globalBranchName = match[1].trim();
           this.logger.log(`🏢 Найден филиал в заголовке: ${globalBranchName}`);
           break;
         }
       }
 
       // 1. Ищем строку с заголовками таблицы
-      let fioIdx = -1, phoneIdx = -1, branchIdx = -1, arrivalIdx = -1, departureIdx = -1;
+      let fioIdx = -1,
+        phoneIdx = -1,
+        branchIdx = -1,
+        arrivalIdx = -1,
+        departureIdx = -1;
       let headerRowIndex = -1;
 
       for (let i = 0; i < Math.min(10, rows.length); i++) {
@@ -75,14 +89,15 @@ export class PatientsImportService {
         let nameInput = '';
         let phoneInput = '';
         let branchInput = '';
-        let arrDate = currentArrivalDate; 
+        let arrDate = currentArrivalDate;
         let depDate: Date | null = null;
 
         // Извлекаем данные по найденным колонкам
         if (fioIdx !== -1 && phoneIdx !== -1) {
           nameInput = String(row[fioIdx] || '').trim();
           phoneInput = String(row[phoneIdx] || '').trim();
-          branchInput = branchIdx !== -1 ? String(row[branchIdx] || '').trim() : '';
+          branchInput =
+            branchIdx !== -1 ? String(row[branchIdx] || '').trim() : '';
 
           // Парсинг даты прихода (Келган сана)
           if (arrivalIdx !== -1 && row[arrivalIdx]) {
@@ -102,7 +117,7 @@ export class PatientsImportService {
             const parsed = parseExcelDate(dateCandidate);
             if (parsed) arrDate = parsed;
           }
-          
+
           for (const cell of row) {
             const val = String(cell).trim();
             if (!val || isPossibleDate(val)) continue;
@@ -119,7 +134,7 @@ export class PatientsImportService {
 
         // Если строка техническая (например, просто цифры "1, 2, 3, 4" под заголовками) - пропускаем
         if (nameInput && nameInput.length < 3 && !isNaN(Number(nameInput))) {
-          continue; 
+          continue;
         }
 
         if (!nameInput && !phoneInput) continue;
@@ -138,7 +153,10 @@ export class PatientsImportService {
         const normalizedPhone = normalizePhone(phoneInput);
         if (!normalizedPhone.valid) {
           errors++;
-          errorDetails.push({ line: lineNumber, reason: `Некорректный телефон: ${phoneInput}` });
+          errorDetails.push({
+            line: lineNumber,
+            reason: `Некорректный телефон: ${phoneInput}`,
+          });
           continue;
         }
 
@@ -163,8 +181,8 @@ export class PatientsImportService {
           name: nameInput,
           phone: normalizedPhone.value,
           branch: finalBranch,
-          arrivalDate: arrDate,         // Точная дата прихода
-          departureDate: depDate,       // Точная дата отъезда
+          arrivalDate: arrDate, // Точная дата прихода
+          departureDate: depDate, // Точная дата отъезда
           status: PatientStatus.NEW,
           avatarColor: getRandomColor(),
         });
@@ -173,10 +191,15 @@ export class PatientsImportService {
         imported++;
       }
 
-      const report = { totalRows: rows.length - 1, imported, skippedDuplicates, errors, errorDetails };
+      const report = {
+        totalRows: rows.length - 1,
+        imported,
+        skippedDuplicates,
+        errors,
+        errorDetails,
+      };
       this.logger.log(`📋 Итоговый отчёт импорта: ${JSON.stringify(report)}`);
       return report;
-
     } catch (err) {
       this.logger.error(`🔥 Ошибка импорта: ${err.message}`);
       throw new BadRequestException(`Ошибка при импорте: ${err.message}`);
@@ -184,24 +207,47 @@ export class PatientsImportService {
   }
 
   private detectColumns(headers: any[]) {
-    const normalize = (s: string) => String(s).toLowerCase().replace(/\s+/g, '');
-    let fioIndex = -1, phoneIndex = -1, branchIndex = -1;
-    let arrivalIndex = -1, departureIndex = -1;
+    const normalize = (s: string) =>
+      String(s).toLowerCase().replace(/\s+/g, '');
+    let fioIndex = -1,
+      phoneIndex = -1,
+      branchIndex = -1;
+    let arrivalIndex = -1,
+      departureIndex = -1;
 
     headers.forEach((h, idx) => {
       if (!h) return;
       const header = normalize(h);
-      
+
       // Имя
-      if (header.includes('фио') || header.includes('имя') || header.includes('фамил') || header.includes('исм')) fioIndex = idx;
+      if (
+        header.includes('фио') ||
+        header.includes('имя') ||
+        header.includes('фамил') ||
+        header.includes('исм')
+      )
+        fioIndex = idx;
       // Телефон (Убрали 'раками' и 'номер', чтобы не путать с "Бино раками")
       else if (header.includes('тел')) phoneIndex = idx;
       // Филиал
-      else if (header.includes('филиал') || header.includes('branch')) branchIndex = idx;
+      else if (header.includes('филиал') || header.includes('branch'))
+        branchIndex = idx;
       // Дата прихода
-      else if (header.includes('келган') || header.includes('приход') || header.includes('поступ') || header.includes('келиш')) arrivalIndex = idx;
+      else if (
+        header.includes('келган') ||
+        header.includes('приход') ||
+        header.includes('поступ') ||
+        header.includes('келиш')
+      )
+        arrivalIndex = idx;
       // Дата отъезда
-      else if (header.includes('кетган') || header.includes('отъезд') || header.includes('выписк') || header.includes('кетиш')) departureIndex = idx;
+      else if (
+        header.includes('кетган') ||
+        header.includes('отъезд') ||
+        header.includes('выписк') ||
+        header.includes('кетиш')
+      )
+        departureIndex = idx;
     });
 
     return { fioIndex, phoneIndex, branchIndex, arrivalIndex, departureIndex };
