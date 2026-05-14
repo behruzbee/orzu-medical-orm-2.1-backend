@@ -45,7 +45,6 @@ export class ReportsService {
     private reportRepository: Repository<Report>,
     @InjectRepository(PatientRequest)
     private requestRepository: Repository<PatientRequest>,
-    // 👇 ДОБАВЛЯЕМ РЕПОЗИТОРИЙ ОШИБОК
     @InjectRepository(ImportErrorLog)
     private errorLogRepository: Repository<ImportErrorLog>,
   ) {}
