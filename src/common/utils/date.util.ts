@@ -5,36 +5,59 @@ export function isPossibleDate(value: any): boolean {
   return /^(\d{1,4}[./\-]\d{1,2}[./\-]\d{1,4})$/.test(str) || /^(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})$/.test(str);
 }
 
-export function parseExcelDate(value: any): Date | null {
-  if (!value) return null;
-  if (value instanceof Date) return value; 
+export function parseExcelDate(excelDate: any): Date | null {
+  if (!excelDate) return null;
 
-  if (typeof value === 'number') {
-    const epoch = new Date(1899, 11, 30);
-    const parsed = new Date(epoch.getTime() + value * 86400000);
-    return isNaN(parsed.getTime()) ? null : parsed;
+  // 1. Если библиотека xlsx уже сама распознала дату (благодаря cellDates: true)
+  if (excelDate instanceof Date) {
+    if (!isNaN(excelDate.getTime())) {
+      return excelDate;
+    }
   }
 
-  const str = String(value).trim().replace(/[,]/g, '.').replace(/[-/]/g, '.');
-  const parts = str.split('.').map((p) => p.trim()).filter(Boolean);
-
-  if (parts.length === 3 && parts[0].length === 4) {
-    const [year, month, day] = parts.map((p) => +p);
-    const date = new Date(year, month - 1, day);
+  // 2. Если Excel передал дату как число (Excel Serial Date - количество дней с 1900 года)
+  if (typeof excelDate === 'number') {
+    // Формула конвертации Excel Serial Date в JS Date
+    const date = new Date(Math.round((excelDate - 25569) * 86400 * 1000));
     return isNaN(date.getTime()) ? null : date;
   }
 
-  if (parts.length === 3) {
-    let [a, b, c] = parts.map((p) => +p);
-    if (c < 100) c = 2000 + c;
-    let day = a, month = b;
-    if (a <= 12 && b > 12) { day = b; month = a; } 
-    else if (a <= 12 && b <= 12) { month = a; day = b; }
-    const date = new Date(c, month - 1, day);
-    return isNaN(date.getTime()) ? null : date;
+  // 3. Если дата пришла как строка
+  if (typeof excelDate === 'string') {
+    const str = excelDate.trim();
+
+    if (str.includes('/')) {
+      const parts = str.split('/');
+      if (parts.length === 3) {
+        const month = parseInt(parts[0], 10);
+        const day = parseInt(parts[1], 10);
+        let year = parseInt(parts[2], 10);
+        if (year < 100) year += 2000;
+
+        const parsedDate = new Date(year, month - 1, day);
+        if (!isNaN(parsedDate.getTime())) return parsedDate;
+      }
+    }
+
+    if (str.includes('.')) {
+      const parts = str.split('.');
+      if (parts.length === 3) {
+        const day = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10);
+        let year = parseInt(parts[2], 10);
+
+        if (year < 100) year += 2000;
+
+        const parsedDate = new Date(year, month - 1, day);
+        if (!isNaN(parsedDate.getTime())) return parsedDate;
+      }
+    }
+
+    const fallback = new Date(str);
+    if (!isNaN(fallback.getTime())) {
+      return fallback;
+    }
   }
 
-  const parsed = new Date(Date.parse(str));
-  if (!isNaN(parsed.getTime())) return parsed;
   return null;
 }
