@@ -5,31 +5,42 @@ import { UsersService } from './modules/users/users.service'; // Путь мож
 
 export async function runSeed(app: INestApplicationContext) {
   const logger = new Logger('SeedData');
-  
+
   // Сервисы
   const patientsService = app.get(PatientsService);
   const usersService = app.get(UsersService);
 
   // 1. Сидируем Администратора
-  const adminData = {
-    name: 'Super Admin',
-    phone: '+998978784727', // Укажи нужный номер
-    pin: '12345',            // Пин-код для входа
-    role: 'admin',          // Роль
-    isActive: true,
-  };
+  const users = [
+    {
+      name: 'Super Admin',
+      phone: '+998978784727', // Укажи нужный номер
+      pin: '12345', // Пин-код для входа
+      role: 'admin', // Роль
+      isActive: true,
+    },
+    {
+      name: 'Durdona',
+      phone: '+998940099500', // Укажи нужный номер
+      pin: '27891', // Пин-код для входа
+      role: 'admin', // Роль
+      isActive: true,
+    },
+  ];
 
-  try {
-    const existingAdmin = await usersService.findOneByPhone(adminData.phone);
-    if (!existingAdmin) {
-      await usersService.create(adminData as any);
-      logger.log(`Admin ${adminData.name} created successfully.`);
-    } else {
-      logger.log(`Admin ${adminData.phone} already exists, skipping.`);
+  users.forEach(async (user) => {
+    try {
+      const existingAdmin = await usersService.findOneByPhone(user.phone);
+      if (!existingAdmin) {
+        await usersService.create(user as any);
+        logger.log(`Admin ${user.name} created successfully.`);
+      } else {
+        logger.log(`Admin ${user.phone} already exists, skipping.`);
+      }
+    } catch (error) {
+      logger.error(`Error seeding admin: ${error.message}`);
     }
-  } catch (error) {
-    logger.error(`Error seeding admin: ${error.message}`);
-  }
+  });
 
   // 2. Сидируем Пациентов
   // const initialPatients = [
