@@ -10,7 +10,7 @@ import { QrAuthStrategy } from './strategies/qr-auth.strategy';
 
 import { UsersModule } from '../users/users.module';
 import { WhatsappModule } from '../whatsapp/whatsapp.module';
-import { PinAuthStrategy } from './interfaces/pin-auth.strategy';
+import { PinAuthStrategy } from './strategies/pin-auth.strategy';
 
 @Module({
   imports: [

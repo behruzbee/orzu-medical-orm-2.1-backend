@@ -2,7 +2,7 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { QrAuthStrategy } from './strategies/qr-auth.strategy';
 import { LoginDto } from './dto/login.dto';
-import { PinAuthStrategy } from './interfaces/pin-auth.strategy';
+import { PinAuthStrategy } from './strategies/pin-auth.strategy';
 
 @Injectable()
 export class AuthService {
