@@ -247,12 +247,13 @@ ${dto.comment || 'Пациент не оставил комментарий.'}${
     }
 
     try {
-      await this.trelloService.deleteCardByFeedbackId(feedbackId);
+      if (feedback.trelloUrl) {
+        const trelloCardId = feedback.trelloUrl.split('/').pop()!;
+
+        await this.trelloService.deleteCard(trelloCardId);
+      }
     } catch (error) {
-      console.error(
-        `Ошибка при удалении карточки Trello для отзыва ${feedbackId}:`,
-        error.message,
-      );
+      console.error(`Ошибка при удалении карточки Trello:`, error.message);
     }
 
     if (feedback.request) {
@@ -264,7 +265,8 @@ ${dto.comment || 'Пациент не оставил комментарий.'}${
 
     return {
       success: true,
-      message: 'Отзыв успешно отменен, статус заявки восстановлен, карточка в Trello удалена.',
+      message:
+        'Отзыв успешно отменен, статус заявки восстановлен, карточка в Trello удалена.',
     };
   }
 }

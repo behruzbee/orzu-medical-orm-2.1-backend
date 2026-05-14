@@ -430,4 +430,27 @@ export class TrelloService {
       );
     }
   }
+
+  async deleteCard(cardId: string): Promise<boolean> {
+    if (!cardId) {
+      this.logger.warn('ID карточки не передан, удаление отменено.');
+      return false;
+    }
+
+    try {
+      const url = `https://api.trello.com/1/cards/${cardId}?key=${this.apiKey}&token=${this.apiToken}`;
+      
+      await axios.delete(url);
+      
+      this.logger.log(`Карточка Trello с ID ${cardId} успешно удалена.`);
+      return true;
+    } catch (error) {
+      this.logger.error(
+        `Ошибка при удалении карточки Trello (${cardId}): ${
+          error.response?.data || error.message
+        }`,
+      );
+      return false; 
+    }
+  }
 }
