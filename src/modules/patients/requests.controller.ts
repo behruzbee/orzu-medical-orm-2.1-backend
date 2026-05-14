@@ -84,7 +84,7 @@ export class RequestsController {
     );
   }
 
-  @Post(':requestId/complaint')
+  @Post(':requestId/feedback')
   async addComplaint(
     @Param('requestId') requestId: string,
     @Body() dto: CreateFeedbackDto,
@@ -97,22 +97,6 @@ export class RequestsController {
       dto,
       req.user.id,
       'complaint',
-    );
-  }
-
-  @Post(':requestId/suggestion')
-  async addSuggestion(
-    @Param('requestId') requestId: string,
-    @Body() dto: CreateFeedbackDto,
-    @Request() req,
-  ) {
-    if (!req.user || !req.user.id)
-      throw new UnauthorizedException('User ID not found');
-    return this.patientActionsService.addFeedback(
-      requestId,
-      dto,
-      req.user.id,
-      'suggestion',
     );
   }
 
