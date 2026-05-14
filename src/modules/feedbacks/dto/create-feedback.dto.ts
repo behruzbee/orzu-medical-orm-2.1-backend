@@ -28,4 +28,8 @@ export class CreateFeedbackDto {
   @IsOptional()
   @IsBoolean()
   sendToTrello?: boolean;
+
+  @IsString()
+  @IsOptional()
+  type?: 'complaint' | 'suggestion';
 }

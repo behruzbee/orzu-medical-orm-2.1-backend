@@ -43,7 +43,6 @@ export class RequestActionsService {
     requestId: string,
     dto: CreateFeedbackDto,
     operatorId: string,
-    type: 'complaint' | 'suggestion', 
   ) {
     if (!operatorId) {
       throw new InternalServerErrorException(
@@ -51,7 +50,7 @@ export class RequestActionsService {
       );
     }
 
-    if (type === 'complaint') {
+    if (dto.type === 'complaint') {
       return this.feedbacksService.createComplaint(requestId, dto, operatorId);
     } else {
       return this.feedbacksService.createSuggestion(requestId, dto, operatorId);

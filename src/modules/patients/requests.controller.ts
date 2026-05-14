@@ -95,8 +95,7 @@ export class RequestsController {
     return this.patientActionsService.addFeedback(
       requestId,
       dto,
-      req.user.id,
-      'complaint',
+      req.user.idx
     );
   }
 
