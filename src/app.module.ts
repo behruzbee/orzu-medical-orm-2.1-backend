@@ -6,7 +6,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { CallHistoryModule } from './modules/call-history/call-history.module';
 import { FeedbacksModule } from './modules/feedbacks/feedbacks.module';
 import { PatientsModule } from './modules/patients/patients.module';
-// import { ReportsModule } from './modules/reports/reports.module';
+import { ReportsModule } from './modules/reports/reports.module';
 import { TrelloModule } from './modules/trello/trello.module';
 import { TelegramModule } from './modules/telegram/telegram.module';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -24,7 +24,7 @@ import { ScheduleModule } from '@nestjs/schedule';
     CallHistoryModule,
     FeedbacksModule,
     PatientsModule,
-    // ReportsModule,
+    ReportsModule,
     TrelloModule,
     TelegramModule
   ],

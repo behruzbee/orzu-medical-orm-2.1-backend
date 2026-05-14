@@ -116,6 +116,17 @@ export class RequestsController {
     );
   }
 
+  @Post(':requestId/all-ok')
+  async markAsAllOk(
+    @Param('requestId') requestId: string,
+    @Request() req,
+  ) {
+    if (!req.user || !req.user.id) {
+      throw new UnauthorizedException('User ID not found');
+    }
+    return this.patientActionsService.markAsAllOk(requestId, req.user.id);
+  }
+
   @Patch(':requestId/revert-status')
   async revertStatus(@Param('requestId') requestId: string) {
     return this.patientActionsService.revertStatus(requestId);

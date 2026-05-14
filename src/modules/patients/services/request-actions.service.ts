@@ -13,6 +13,7 @@ import { AddCallStatusDto } from '../../call-history/dto/add-call-status.dto';
 import { CallHistoryService } from '../../call-history/call-history.service';
 import { FeedbacksService } from '../../feedbacks/feedbacks.service';
 import { CreateFeedbackDto } from 'src/modules/feedbacks/dto/create-feedback.dto';
+import { RequestStatus } from 'src/common/enums/request-status.enum';
 
 @Injectable()
 export class RequestActionsService {
@@ -57,7 +58,30 @@ export class RequestActionsService {
     }
   }
 
+  async markAsAllOk(requestId: string, operatorId: string) {
+    if (!operatorId) {
+      throw new InternalServerErrorException(
+        'Operator ID is missing inside Service',
+      );
+    }
 
+    const request = await this.requestRepository.findOne({
+      where: { id: requestId },
+    });
+
+    if (!request) {
+      throw new NotFoundException('Заявка не найдена');
+    }
+
+    return this.callHistoryService.create(
+      requestId,
+      {
+        status: RequestStatus.ALL_OK, 
+        note: "Hammasi joyida (Shikoyat yo'q)", 
+      },
+      operatorId,
+    );
+  }
   async revertStatus(requestId: string) {
     const request = await this.requestRepository.findOne({
       where: { id: requestId },

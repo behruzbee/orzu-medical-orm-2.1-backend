@@ -24,7 +24,6 @@ export class WhatsappService implements OnModuleInit {
   private statusSubject = new Subject<{ status: string; user?: any }>();
 
   constructor(
-    // Инжектим ОБА репозитория правильно
     @InjectRepository(PatientRequest)
     private requestRepository: Repository<PatientRequest>,
     @InjectRepository(Patient)
@@ -96,32 +95,30 @@ export class WhatsappService implements OnModuleInit {
     return `${cleanPhone}@c.us`;
   }
 
-  // ... getChatHistory остается без изменений ...
   async getChatHistory(phone: string, limit = 50) {
-    // (Ваш оригинальный код getChatHistory - он написан нормально, оставляем как есть)
-    // ...
+    return [];
   }
 
-  async sendText(phone: string, text: string) {
+  // 👈 Accept optional requestId
+  async sendText(phone: string, text: string, requestId?: string) {
     const chatId = this.getChatId(phone);
 
     const response = await this.client.sendMessage(chatId, text, {
       sendSeen: false,
     });
 
-    // Исправлено: передаем телефон, метод сам найдет нужную заявку
-    await this.updateRequestStatusToContacted(phone);
+    await this.updateRequestStatusToContacted(phone, requestId);
 
     return response;
   }
 
-  async sendMedia(phone: string, fileUrl: string, caption?: string) {
+  // 👈 Accept optional requestId
+  async sendMedia(phone: string, fileUrl: string, caption?: string, requestId?: string) {
     const chatId = this.getChatId(phone);
     const media = await MessageMedia.fromUrl(fileUrl);
     const response = await this.client.sendMessage(chatId, media, { caption });
 
-    // Исправлено: передаем телефон
-    await this.updateRequestStatusToContacted(phone);
+    await this.updateRequestStatusToContacted(phone, requestId);
 
     return response;
   }
@@ -137,7 +134,6 @@ export class WhatsappService implements OnModuleInit {
       throw new BadRequestException('WhatsApp client not ready');
     }
 
-    // ИСПРАВЛЕНО: Теперь делаем JOIN с пациентом, чтобы искать и по телефону, и по заявке
     const qb = this.requestRepository
       .createQueryBuilder('request')
       .leftJoinAndSelect('request.patient', 'patient');
@@ -175,7 +171,7 @@ export class WhatsappService implements OnModuleInit {
       });
     }
 
-    const requests = await qb.getMany(); // ИСПРАВЛЕНО: переименовано в requests
+    const requests = await qb.getMany();
 
     if (requests.length === 0) {
       throw new BadRequestException(
@@ -204,7 +200,8 @@ export class WhatsappService implements OnModuleInit {
         const phone = req.patient?.phone;
 
         if (phone) {
-          await this.sendText(phone, text);
+          // 👈 Pass req.id to the sendText method
+          await this.sendText(phone, text, req.id);
           sentCount++;
 
           const delay = Math.floor(Math.random() * 4000) + 3000;
@@ -222,24 +219,34 @@ export class WhatsappService implements OnModuleInit {
     );
   }
 
-  // ИСПРАВЛЕНО: Теперь метод принимает телефон, ищет пациента, а затем обновляет его последнюю NEW заявку
-  private async updateRequestStatusToContacted(phone: string) {
+  // 👈 Modified to prioritize requestId if provided
+  private async updateRequestStatusToContacted(phone: string, requestId?: string) {
     try {
-      const patient = await this.patientRepository.findOne({
-        where: { phone },
-        relations: ['requests'], // Подтягиваем все заявки этого пациента
-      });
+      let targetRequest: PatientRequest | null = null;
 
-      if (!patient || !patient.requests.length) return;
+      // Use specific requestId if available for precision
+      if (requestId) {
+        targetRequest = await this.requestRepository.findOne({
+          where: { id: requestId, status: RequestStatus.NEW },
+        });
+      } 
+      // Fallback: Use phone to find patient, then find the NEW request
+      else {
+        const patient = await this.patientRepository.findOne({
+          where: { phone },
+          relations: ['requests'], 
+        });
 
-      // Ищем среди заявок ту, у которой статус NEW
-      const newRequest = patient.requests.find(
-        (req) => req.status === RequestStatus.NEW,
-      );
+        if (patient && patient.requests.length > 0) {
+          targetRequest = patient.requests.find(
+            (req) => req.status === RequestStatus.NEW,
+          ) || null;
+        }
+      }
 
-      if (newRequest) {
-        newRequest.status = RequestStatus.CONTACTED;
-        await this.requestRepository.save(newRequest);
+      if (targetRequest) {
+        targetRequest.status = RequestStatus.CONTACTED;
+        await this.requestRepository.save(targetRequest);
       }
     } catch (e) {
       this.logger.error(`Error updating request status: ${e.message}`);

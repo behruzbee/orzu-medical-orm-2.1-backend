@@ -28,9 +28,10 @@ export class WhatsappController {
     return this.whatsappService.broadcastByFilters(dto);
   }
 
+  // 👈 Accept optional requestId
   @Post('send')
-  async sendMessage(@Body() body: { phone: string; text: string }) {
-    await this.whatsappService.sendText(body.phone, body.text);
+  async sendMessage(@Body() body: { phone: string; text: string; requestId?: string }) {
+    await this.whatsappService.sendText(body.phone, body.text, body.requestId);
     return { success: true };
   }
 }

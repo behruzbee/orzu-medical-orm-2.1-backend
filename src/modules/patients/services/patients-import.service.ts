@@ -152,7 +152,13 @@ export class PatientsImportService {
         const errors: string[] = [];
         let cleanPhone = phoneInput;
 
-        // 🇺🇿 ОШИБКИ НА УЗБЕКСКОМ
+        const diffTime = depDate.getTime() - arrDate.getTime();
+        const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+
+        if (diffDays < 0 || diffDays > 15) {
+          errors.push(`Sanalar xato kiritilgan (${diffDays} kun)`);
+        }
+
         if (!nameInput) errors.push('Ism kiritilmagan');
         if (!phoneInput) {
           errors.push('Telefon raqami kiritilmagan');
@@ -326,6 +332,8 @@ export class PatientsImportService {
             category = 'DUPLICATE_FILE';
           } else if (errString.includes("Noto'g'ri telefon raqami")) {
             category = 'INVALID_PHONE';
+          } else if (errString.includes('Sanalar xato kiritilgan')) {
+            category = 'INVALID_DATES';
           } else if (
             errString.includes('Ism kiritilmagan') ||
             errString.includes('Telefon raqami kiritilmagan')
@@ -374,6 +382,7 @@ export class PatientsImportService {
       DUPLICATE_FILE: 0,
       INVALID_PHONE: 0,
       MISSING_DATA: 0,
+      INVALID_DATES: 0, 
       OTHER: 0,
     };
 
@@ -384,13 +393,14 @@ export class PatientsImportService {
         errorCount++;
         const errString = row.errorDetails.join(' ');
 
-        // 🇺🇿 СИНХРОНИЗИРОВАННЫЕ ПРОВЕРКИ
         if (errString.includes('faol arizasi mavjud')) {
           categoriesCount.ACTIVE_REQUEST_EXISTS++;
         } else if (errString.includes('Fayl ichida takrorlangan')) {
           categoriesCount.DUPLICATE_FILE++;
         } else if (errString.includes("Noto'g'ri telefon raqami")) {
           categoriesCount.INVALID_PHONE++;
+        } else if (errString.includes('Sanalar xato kiritilgan')) {
+          categoriesCount.INVALID_DATES++; // 🔥 Увеличиваем счетчик
         } else if (
           errString.includes('Ism kiritilmagan') ||
           errString.includes('Telefon raqami kiritilmagan')
