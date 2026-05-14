@@ -26,7 +26,7 @@ export class CreateEvidenceDto {
 
   @IsString()
   @IsOptional()
-  sender?: 'operator' | 'patient';
+  sender?: 'operator';
 
   @IsString()
   @IsOptional()

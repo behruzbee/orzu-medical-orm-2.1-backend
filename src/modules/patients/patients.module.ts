@@ -2,23 +2,37 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Patient } from './entities/patient.entity';
 
-import { PatientsController } from './patients.controller';
+import { RequestsController } from './requests.controller';
 
 import { PatientsService } from './services/patients.service';
 import { PatientsImportService } from './services/patients-import.service';
-import { PatientActionsService } from './services/patient-actions.service';
+import { RequestActionsService } from './services/request-actions.service';
 import { PatientsStatsService } from './services/patients-stats.service';
 
-import { FilesModule } from '../files/files.module';
 import { TrelloModule } from '../trello/trello.module';
+import { PatientRequest } from './entities/patient_requests.entity';
+import { PatientImportTemp } from './entities/patient-import-temp.entity';
+import { CallHistoryModule } from '../call-history/call-history.module';
+import { FeedbacksModule } from '../feedbacks/feedbacks.module';
+import { ImportErrorLog } from './entities/import-error-log.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Patient]), FilesModule, TrelloModule],
-  controllers: [PatientsController],
+  imports: [
+    TypeOrmModule.forFeature([
+      Patient,
+      PatientRequest,
+      PatientImportTemp,
+      ImportErrorLog,
+    ]),
+    TrelloModule,
+    CallHistoryModule,
+    FeedbacksModule,
+  ],
+  controllers: [RequestsController],
   providers: [
     PatientsService,
     PatientsImportService,
-    PatientActionsService,
+    RequestActionsService,
     PatientsStatsService,
   ],
   exports: [PatientsService],

@@ -21,7 +21,7 @@ export class AuthService {
         break;
 
       case 'qr':
-        user = await this.qrStrategy.validate({});
+        user = await this.qrStrategy.validate();
         break;
 
       default:

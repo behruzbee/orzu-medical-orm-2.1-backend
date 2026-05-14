@@ -6,9 +6,7 @@ import {
   UpdateDateColumn,
   OneToMany,
 } from 'typeorm';
-import { CallStatus } from '../../call-history/entities/call-status.entity';
-import { Feedback } from '../../feedbacks/entities/feedback.entity';
-import { PatientStatus } from 'src/common/enums/patient-status.enum';
+import { PatientRequest } from './patient_requests.entity';
 
 @Entity('patients')
 export class Patient {
@@ -21,34 +19,12 @@ export class Patient {
   @Column({ unique: true })
   phone: string;
 
-  @Column()
-  branch: string;
+  @OneToMany(() => PatientRequest, (request) => request.patient)
+  requests: PatientRequest[];
 
-  @Column({ type: 'timestamp' })
-  departureDate: Date;
-
-  @Column({ type: 'timestamp' })
-  arrivalDate: Date;
-
-  @Column({
-    type: 'enum',
-    enum: PatientStatus,
-    default: PatientStatus.NEW,
-  })
-  status: PatientStatus;
-
-  @Column({ length: 7 })
+  @Column({ nullable: true })
   avatarColor: string;
-
-  @OneToMany(() => CallStatus, (call) => call.patient)
-  callHistory: CallStatus[];
-
-  @OneToMany(() => Feedback, (feedback) => feedback.patient)
-  feedbacks: Feedback[];
 
   @CreateDateColumn()
   createdAt: Date;
-
-  @UpdateDateColumn()
-  updatedAt: Date;
 }

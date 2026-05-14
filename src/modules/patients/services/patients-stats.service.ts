@@ -1,14 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, In, Not } from 'typeorm';
-import { PatientStatus } from 'src/common/enums/patient-status.enum';
-import { Patient } from '../entities/patient.entity';
+import { RequestStatus } from 'src/common/enums/request-status.enum'; // Исправлено на RequestStatus
+import { PatientRequest } from '../entities/patient_requests.entity'; // Используем PatientRequest вместо Patient
 
 @Injectable()
 export class PatientsStatsService {
   constructor(
-    @InjectRepository(Patient) 
-    private patientRepo: Repository<Patient>
+    @InjectRepository(PatientRequest) 
+    private requestRepo: Repository<PatientRequest> // Меняем репозиторий
   ) {}
 
   async getStats() {
@@ -18,29 +18,29 @@ export class PatientsStatsService {
     const todayEnd = new Date();
     todayEnd.setHours(23, 59, 59, 999);
 
-    const totalTasks = await this.patientRepo.count({
+    const totalTasks = await this.requestRepo.count({
       where: {
-        status: In([PatientStatus.NEW, PatientStatus.CONTACTED]),
+        status: In([RequestStatus.NEW, RequestStatus.CONTACTED]),
       },
     });
 
-    const newTasks = await this.patientRepo.count({
+    const newTasks = await this.requestRepo.count({
       where: {
         createdAt: Between(todayStart, todayEnd),
-        status: In([PatientStatus.NEW, PatientStatus.CONTACTED]),
+        status: In([RequestStatus.NEW, RequestStatus.CONTACTED]),
       },
     });
 
-    const callBackTasks = await this.patientRepo.count({
+    const callBackTasks = await this.requestRepo.count({
       where: {
-        status: PatientStatus.CONTACTED,
+        status: RequestStatus.CONTACTED,
         updatedAt: Between(todayStart, todayEnd),
       },
     });
 
-    const completedTasks = await this.patientRepo.count({
+    const completedTasks = await this.requestRepo.count({
       where: {
-        status: Not(In([PatientStatus.NEW, PatientStatus.CONTACTED])),
+        status: Not(In([RequestStatus.NEW, RequestStatus.CONTACTED])),
         updatedAt: Between(todayStart, todayEnd),
       },
     });

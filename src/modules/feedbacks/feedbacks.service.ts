@@ -1,9 +1,12 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { ConfigService } from '@nestjs/config'; // Обязательно импортируйте ConfigService
+import { ConfigService } from '@nestjs/config';
 import { v4 as uuidv4 } from 'uuid';
+
 import { Feedback } from './entities/feedback.entity';
+import { PatientRequest } from '../patients/entities/patient_requests.entity';
+import { RequestStatus } from 'src/common/enums/request-status.enum';
 import {
   EvidenceMessage,
   EvidenceSource,
@@ -16,17 +19,58 @@ import { TrelloService } from '../trello/services/trello.service';
 export class FeedbacksService {
   constructor(
     @InjectRepository(Feedback)
-    private feedbackRepo: Repository<Feedback>, // У вас тут feedbackRepo (без sitory)
+    private feedbackRepo: Repository<Feedback>,
     @InjectRepository(EvidenceMessage)
     private evidenceRepo: Repository<EvidenceMessage>,
+    @InjectRepository(PatientRequest)
+    private requestRepo: Repository<PatientRequest>,
     private readonly trelloService: TrelloService,
-    private readonly configService: ConfigService, // Добавили для получения ID списков Trello
+    private readonly configService: ConfigService,
   ) {}
 
-  async create(patientId: string, dto: CreateFeedbackDto, operatorId: string) {
+  async createComplaint(
+    requestId: string,
+    dto: CreateFeedbackDto,
+    operatorId: string,
+  ) {
+    return this.processAndCreateFeedback(
+      requestId,
+      dto,
+      operatorId,
+      'complaint',
+    );
+  }
+
+  async createSuggestion(
+    requestId: string,
+    dto: CreateFeedbackDto,
+    operatorId: string,
+  ) {
+    return this.processAndCreateFeedback(
+      requestId,
+      dto,
+      operatorId,
+      'suggestion',
+    );
+  }
+
+  private async processAndCreateFeedback(
+    requestId: string,
+    dto: CreateFeedbackDto,
+    operatorId: string,
+    type: 'complaint' | 'suggestion',
+  ) {
+    const request = await this.requestRepo.findOne({
+      where: { id: requestId },
+      relations: ['patient'],
+    });
+
+    if (!request) {
+      throw new NotFoundException(`Заявка с ID ${requestId} не найдена`);
+    }
+
     const backendUrl = process.env.UPLOAD_URL || 'http://localhost:3000';
 
-    // 1. Обработка файлов (доказательств)
     const processedEvidence = await Promise.all(
       dto.evidence.map(async (item) => {
         let buffer: Buffer | null = null;
@@ -53,17 +97,18 @@ export class FeedbacksService {
         newEvidence.mediaData = buffer || Buffer.from('');
         newEvidence.mimeType = mimeType || '';
         newEvidence.duration = item.duration || '';
-        newEvidence.source = (item.source as EvidenceSource) || EvidenceSource.MANUAL;
+        newEvidence.source =
+          (item.source as EvidenceSource) || EvidenceSource.MANUAL;
         newEvidence.sender = item.sender || 'patient';
-        newEvidence.originalTimestamp = item.originalTimestamp || new Date().toISOString();
+        newEvidence.originalTimestamp =
+          item.originalTimestamp || new Date().toISOString();
 
         return newEvidence;
       }),
     );
 
-    // 2. СНАЧАЛА создаем и сохраняем сам отзыв в базу
     const newFeedback = this.feedbackRepo.create({
-      patientId,
+      requestId,
       operatorId,
       ratings: dto.ratings,
       comment: dto.comment,
@@ -72,36 +117,108 @@ export class FeedbacksService {
 
     const savedFeedback = await this.feedbackRepo.save(newFeedback);
 
-    // 3. ПОСЛЕ сохранения у нас есть savedFeedback.id. Создаем карточку в Trello.
-    // Если это жалоба (оценки низкие), берем список входящих жалоб
-    const listId = this.configService.get<string>('TRELLO_LIST_NEW_COMPLAINTS'); 
-    
+    request.status =
+      type === 'complaint'
+        ? RequestStatus.FEEDBACK_NEGATIVE
+        : RequestStatus.FEEDBACK_POSITIVE;
+    await this.requestRepo.save(request);
+
+    const listId =
+      type === 'complaint'
+        ? this.configService.get<string>('TRELLO_LIST_NEW_COMPLAINTS')
+        : this.configService.get<string>('TRELLO_LIST_SUGGESTIONS');
+
     if (listId) {
       try {
-        // Формируем название и описание для Trello
-        const cardName = `Обращение от пациента (ID: ${patientId.slice(0, 8)})`;
-        const cardDesc = `FeedbackID: ${savedFeedback.id}\n\nКомментарий: ${dto.comment || 'Нет комментария'}`;
+        const patientName = request.patient?.name || 'Неизвестно';
+        const patientPhone = request.patient?.phone || 'Неизвестно';
+        const branchName = request.branch || 'Неизвестно';
 
-        const card = await this.trelloService.createCard(listId, cardName, cardDesc);
+        const translationMap: Record<string, string> = {
+          doctors: 'Шифокорлар (Врачи)',
+          nurses: 'Ҳамширалар (Медсестры)',
+          cleanliness: 'Тозалик (Чистота)',
+          food: 'Овқатланиш (Питание)',
+          reception: 'Қабулхона (Ресепшн)',
+          clinic: 'Клиника (Клиника)',
+          overall: 'Умумий хулоса (Общее впечатление)',
+        };
 
-        // 4. Если карточка успешно создалась, сохраняем ссылку в базу
+        let ratingsText = '';
+        if (dto.ratings && Object.keys(dto.ratings).length > 0) {
+          ratingsText =
+            '\n\n📊 Баллар:\n' +
+            Object.entries(dto.ratings)
+              .map(([key, value]) => {
+                const translatedName = translationMap[key] || key;
+                return `🔹 ${translatedName}: ${value}/5`;
+              })
+              .join('\n');
+        }
+
+        let evidenceText = '';
+        if (processedEvidence.length > 0) {
+          evidenceText =
+            '\n\n📎 Вложения:\n' +
+            processedEvidence
+              .map((e, index) => `${index + 1}. Файл: ${e.mediaUrl}`)
+              .join('\n');
+        }
+
+        const dateStr = new Date().toLocaleString('ru-RU', {
+          timeZone: 'Asia/Tashkent',
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        });
+
+        let categoryText =
+          type === 'complaint' ? 'Умумий (Общее)' : 'Таклиф (Предложение)';
+
+        if (dto.category && translationMap[dto.category]) {
+          categoryText = translationMap[dto.category];
+        }
+
+        const cardName = `${branchName.toUpperCase()} — ${categoryText}`;
+
+        const titleType = type === 'complaint' ? 'Жалоба' : 'Предложение';
+        const icon = type === 'complaint' ? '📋' : '💡';
+
+        const cardDesc = `${icon} ${titleType} от пациента
+👤 ФИО: ${patientName}
+📞 Телефон: ${patientPhone}
+🏥 Филиал: ${branchName}
+📂 Категория: ${categoryText}
+📝 Текст ва Далиллар:
+${dto.comment || 'Пациент не оставил комментарий.'}${evidenceText}${ratingsText}
+
+📅 Дата: ${dateStr}
+🆔 FeedbackID: ${savedFeedback.id}`;
+
+        const card = await this.trelloService.createCard(
+          listId,
+          cardName,
+          cardDesc,
+        );
+
         if (card && card.shortUrl) {
           savedFeedback.trelloUrl = card.shortUrl;
-          await this.feedbackRepo.save(savedFeedback); // Обновляем запись
+          await this.feedbackRepo.save(savedFeedback);
         }
       } catch (error) {
-        // Оборачиваем в try-catch, чтобы ошибка Trello не сломала сохранение отзыва
-        console.error('Ошибка при отправке в Trello:', error.message);
+        console.error(`Ошибка при отправке ${type} в Trello:`, error.message);
       }
     }
 
-    // Возвращаем итоговый сохраненный отзыв (уже со ссылкой на Trello, если она создалась)
     return savedFeedback;
   }
 
   async findAll() {
     return this.feedbackRepo.find({
-      relations: ['patient', 'evidenceMessages'],
+      relations: ['request', 'evidenceMessages'],
       order: { createdAt: 'DESC' },
     });
   }
@@ -117,5 +234,37 @@ export class FeedbacksService {
     }
 
     return evidence;
+  }
+
+  async revertFeedback(feedbackId: string) {
+    const feedback = await this.feedbackRepo.findOne({
+      where: { id: feedbackId },
+      relations: ['request'],
+    });
+
+    if (!feedback) {
+      throw new NotFoundException(`Отзыв с ID ${feedbackId} не найден`);
+    }
+
+    try {
+      await this.trelloService.deleteCardByFeedbackId(feedbackId);
+    } catch (error) {
+      console.error(
+        `Ошибка при удалении карточки Trello для отзыва ${feedbackId}:`,
+        error.message,
+      );
+    }
+
+    if (feedback.request) {
+      feedback.request.status = RequestStatus.CONTACTED;
+      await this.requestRepo.save(feedback.request);
+    }
+
+    await this.feedbackRepo.remove(feedback);
+
+    return {
+      success: true,
+      message: 'Отзыв успешно отменен, статус заявки восстановлен, карточка в Trello удалена.',
+    };
   }
 }

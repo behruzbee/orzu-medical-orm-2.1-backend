@@ -14,6 +14,9 @@ export class CreateFeedbackDto {
   ratings: Record<string, number>;
 
   @IsString()
+  category: string
+
+  @IsString()
   @IsOptional()
   comment?: string;
 

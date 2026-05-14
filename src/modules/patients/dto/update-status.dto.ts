@@ -1,8 +1,8 @@
 import { IsEnum, IsNotEmpty } from 'class-validator';
-import { PatientStatus } from 'src/common/enums/patient-status.enum';
+import { RequestStatus } from 'src/common/enums/request-status.enum';
 
 export class UpdatePatientStatusDto {
-  @IsEnum(PatientStatus)
+  @IsEnum(RequestStatus)
   @IsNotEmpty()
-  status: PatientStatus;
+  status: RequestStatus;
 }

@@ -1,48 +1,22 @@
-import {
-  Injectable,
-  ConflictException,
-  NotFoundException,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+
 import { Patient } from '../entities/patient.entity';
-import { CreatePatientDto } from '../dto/create-patient.dto';
+import { PatientRequest } from '../entities/patient_requests.entity';
 import { FindAllPatientsDto } from '../dto/find-all-patients.dto';
-import { PatientStatus } from 'src/common/enums/patient-status.enum';
-import { getRandomColor } from 'src/common/utils/color.util';
 
 @Injectable()
 export class PatientsService {
   private readonly logger = new Logger(PatientsService.name);
 
   constructor(
+    @InjectRepository(PatientRequest)
+    private requestRepository: Repository<PatientRequest>,
+
     @InjectRepository(Patient)
     private patientRepository: Repository<Patient>,
   ) {}
-
-  async createFromExternal(dto: CreatePatientDto) {
-    const exists = await this.patientRepository.findOne({
-      where: { phone: dto.phone },
-    });
-    
-    if (exists) {
-      this.logger.warn(`Duplicate patient attempt: ${dto.phone}`);
-      throw new ConflictException('Bemor allaqachon mavjud');
-    }
-
-    const color = dto.avatarColor || getRandomColor();
-
-    const patient = this.patientRepository.create({
-      ...dto,
-      status: PatientStatus.NEW,
-      avatarColor: color,
-      departureDate: new Date(dto.departureDate),
-      arrivalDate: new Date(dto.arrivalDate),
-    });
-
-    return this.patientRepository.save(patient);
-  }
 
   async findAll(query: FindAllPatientsDto) {
     const {
@@ -58,19 +32,20 @@ export class PatientsService {
 
     const skip = (page - 1) * limit;
 
-    const qb = this.patientRepository.createQueryBuilder('patient');
+    const qb = this.requestRepository
+      .createQueryBuilder('request')
+      .leftJoinAndSelect('request.patient', 'patient')
+      .leftJoinAndSelect('request.callStatus', 'callStatus')
+      .leftJoinAndSelect('request.feedback', 'feedback');
 
-    // 1. Статус
     if (status) {
-      qb.andWhere('patient.status = :status', { status });
+      qb.andWhere('request.status = :status', { status });
     }
 
-    // 2. Филиал (Branch)
     if (branch) {
-      qb.andWhere('patient.branch = :branch', { branch });
+      qb.andWhere('request.branch = :branch', { branch });
     }
 
-    // 3. Код телефона (Страна)
     const COUNTRY_CODES: Record<string, string> = {
       Russia: '+7',
       Uzbekistan: '+998',
@@ -87,17 +62,15 @@ export class PatientsService {
       });
     }
 
-    // 4. Фильтр по дате вылета (Departure Date)
     if (dateFrom && dateTo) {
-      qb.andWhere('patient.arrivalDate BETWEEN :dateFrom AND :dateTo', {
+      qb.andWhere('request.arrivalDate BETWEEN :dateFrom AND :dateTo', {
         dateFrom,
         dateTo,
       });
     } else if (dateFrom) {
-      qb.andWhere('patient.arrivalDate >= :dateFrom', { dateFrom });
+      qb.andWhere('request.arrivalDate >= :dateFrom', { dateFrom });
     }
 
-    // 5. Общий поиск (Search input)
     if (search) {
       qb.andWhere(
         '(patient.name ILIKE :search OR patient.phone ILIKE :search)',
@@ -105,8 +78,7 @@ export class PatientsService {
       );
     }
 
-    // Сортировка и пагинация
-    qb.orderBy('patient.createdAt', 'DESC');
+    qb.orderBy('request.createdAt', 'DESC');
     qb.skip(skip).take(limit);
 
     const [data, total] = await qb.getManyAndCount();
@@ -122,26 +94,34 @@ export class PatientsService {
     };
   }
 
-  async findOne(id: string) {
-    const patient = await this.patientRepository.findOne({
+  async findOneRequest(id: string) {
+    const request = await this.requestRepository.findOne({
       where: { id },
-      relations: ['feedbacks', 'callHistory', 'feedbacks.evidenceMessages'],
+      relations: [
+        'patient',
+        'callStatus',
+        'feedback',
+        'feedback.evidenceMessages',
+      ],
     });
-    
+
+    if (!request) throw new NotFoundException('Arizani (Заявку) topilmadi');
+
+    return request;
+  }
+  async findOnePatientProfile(patientId: string) {
+    const patient = await this.patientRepository.findOne({
+      where: { id: patientId },
+      relations: [
+        'requests',
+        'requests.callStatus',
+        'requests.feedback',
+        'requests.feedback.evidenceMessages',
+      ],
+    });
+
     if (!patient) throw new NotFoundException('Bemor topilmadi');
-    
+
     return patient;
-  }
-
-  async updateStatus(id: string, status: PatientStatus) {
-    const patient = await this.findOne(id);
-    patient.status = status;
-    return this.patientRepository.save(patient);
-  }
-
-  async remove(id: string) {
-    const result = await this.patientRepository.delete(id);
-    if (result.affected === 0) throw new NotFoundException('Bemor topilmadi');
-    return { message: "Bemor va uning barcha ma'lumotlari o'chirildi" };
   }
 }

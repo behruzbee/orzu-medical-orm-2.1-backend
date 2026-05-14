@@ -10,7 +10,7 @@ export class QrAuthStrategy implements IAuthStrategy {
     private readonly whatsappService: WhatsappService,
   ) {}
 
-  async validate(payload: any) {
+  async validate() {
     const activePhone = this.whatsappService.getCurrentUserPhone();
 
     if (!activePhone) {

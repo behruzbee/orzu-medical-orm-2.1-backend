@@ -1,9 +1,9 @@
 import { IsEnum, IsString, IsOptional } from 'class-validator';
-import { PatientStatus } from 'src/common/enums/patient-status.enum';
+import { RequestStatus } from 'src/common/enums/request-status.enum';
 
 export class AddCallStatusDto {
-  @IsEnum(PatientStatus)
-  status: PatientStatus;
+  @IsEnum(RequestStatus)
+  status: RequestStatus;
 
   @IsString()
   @IsOptional()

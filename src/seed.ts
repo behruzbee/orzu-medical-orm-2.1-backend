@@ -1,7 +1,7 @@
 import { INestApplicationContext, Logger } from '@nestjs/common';
 import { PatientsService } from './modules/patients/services/patients.service';
 import { UsersService } from './modules/users/users.service'; // Путь может отличаться
-import { PatientStatus } from './common/enums/patient-status.enum';
+// import { PatientStatus } from './common/enums/patient-status.enum';
 
 export async function runSeed(app: INestApplicationContext) {
   const logger = new Logger('SeedData');

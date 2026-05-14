@@ -1,4 +1,4 @@
-import { IsString, Matches, IsNotEmpty, Length, IsOptional, IsEnum } from 'class-validator';
+import { IsString, Matches, Length, IsOptional, IsEnum } from 'class-validator';
 
 export class LoginDto {
   @IsEnum(['pin', 'qr'], { message: "Metod 'pin' yoki 'qr' bo'lishi kerak" })
@@ -7,7 +7,9 @@ export class LoginDto {
   // Обязательно только для метода 'pin'
   @IsOptional()
   @IsString()
-  @Matches(/^\+998\d{9}$/, { message: "Telefon formati noto'g'ri (+998XXXXXXXXX)" })
+  @Matches(/^\+998\d{9}$/, {
+    message: "Telefon formati noto'g'ri (+998XXXXXXXXX)",
+  })
   phone?: string;
 
   @IsOptional()

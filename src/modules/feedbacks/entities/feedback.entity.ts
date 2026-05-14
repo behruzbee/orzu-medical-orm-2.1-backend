@@ -1,6 +1,14 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, ManyToOne, OneToMany, JoinColumn } from 'typeorm';
-import { Patient } from '../../patients/entities/patient.entity';
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  CreateDateColumn,
+  OneToMany,
+  JoinColumn,
+  OneToOne,
+} from 'typeorm';
 import { EvidenceMessage } from './evidence-message.entity';
+import { PatientRequest } from 'src/modules/patients/entities/patient_requests.entity';
 
 @Entity('feedbacks')
 export class Feedback {
@@ -14,16 +22,18 @@ export class Feedback {
   comment: string;
 
   @Column()
-  operatorId: string; 
+  operatorId: string;
 
-  @ManyToOne(() => Patient, (patient) => patient.feedbacks, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'patientId' })
-  patient: Patient;
+  @OneToOne(() => PatientRequest, (request) => request.feedback, {
+    onDelete: 'CASCADE',
+  })
+  @JoinColumn({ name: 'requestId' })
+  request: PatientRequest;
 
   @Column()
-  patientId: string;
+  requestId: string;
 
-  @Column({ nullable: true }) 
+  @Column({ nullable: true })
   trelloUrl: string;
 
   @OneToMany(() => EvidenceMessage, (msg) => msg.feedback, { cascade: true })

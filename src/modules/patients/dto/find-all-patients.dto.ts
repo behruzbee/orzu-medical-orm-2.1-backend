@@ -7,7 +7,7 @@ import {
   IsISO8601,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { PatientStatus } from 'src/common/enums/patient-status.enum';
+import { RequestStatus } from 'src/common/enums/request-status.enum';
 
 export class FindAllPatientsDto {
   @IsOptional()
@@ -27,8 +27,8 @@ export class FindAllPatientsDto {
   search?: string; 
 
   @IsOptional()
-  @IsEnum(PatientStatus)
-  status?: PatientStatus;
+  @IsEnum(RequestStatus)
+  status?: RequestStatus;
 
   @IsOptional()
   @IsString()
