@@ -23,7 +23,7 @@ import { CreateFeedbackDto } from '../feedbacks/dto/create-feedback.dto';
 
 import { PatientsService } from './services/patients.service';
 import { PatientsImportService } from './services/patients-import.service';
-import {RequestActionsService } from './services/request-actions.service';
+import { RequestActionsService } from './services/request-actions.service';
 import { PatientsStatsService } from './services/patients-stats.service';
 
 @Controller('requests')
@@ -85,25 +85,24 @@ export class RequestsController {
   }
 
   @Post(':requestId/feedback')
-  async addComplaint(
+  @UseGuards(AuthGuard('jwt'))
+  async addFeedback(
     @Param('requestId') requestId: string,
     @Body() dto: CreateFeedbackDto,
     @Request() req,
   ) {
-    if (!req.user || !req.user.id)
-      throw new UnauthorizedException('User ID not found');
-    return this.patientActionsService.addFeedback(
-      requestId,
-      dto,
-      req.user.idx
-    );
+    const operatorId = req.user?.id || req.user?.sub;
+
+    if (!operatorId) {
+      throw new UnauthorizedException(
+        'Не удалось получить ID оператора из токена',
+      );
+    }
+    return this.patientActionsService.addFeedback(requestId, dto, operatorId);
   }
 
   @Post(':requestId/all-ok')
-  async markAsAllOk(
-    @Param('requestId') requestId: string,
-    @Request() req,
-  ) {
+  async markAsAllOk(@Param('requestId') requestId: string, @Request() req) {
     if (!req.user || !req.user.id) {
       throw new UnauthorizedException('User ID not found');
     }
