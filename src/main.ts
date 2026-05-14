@@ -30,8 +30,10 @@ async function bootstrap() {
     credentials: true,
   });
 
- const uploadsPath = path.join(__dirname, '..', 'uploads');
-  app.useStaticAssets(uploadsPath);
+  const uploadsPath = path.join(__dirname, '..', 'uploads');
+  app.useStaticAssets(uploadsPath, {
+    prefix: '/uploads/',
+  });
 
   try {
     await runSeed(app);

@@ -11,6 +11,9 @@ import { PatientRequest } from '../patients/entities/patient_requests.entity';
 import { RequestStatus } from 'src/common/enums/request-status.enum';
 import { GenerateReportDto } from './dto/generate-report.dto';
 
+// 👇 ИМПОРТИРУЕМ СУЩНОСТЬ ОШИБОК ИМПОРТА
+import { ImportErrorLog } from '../patients/entities/import-error-log.entity';
+
 const CATEGORIES = [
   { id: 'doctors', label: 'Врачлар тугрисида' },
   { id: 'nurses', label: 'Хамширалар тугрисида' },
@@ -22,6 +25,17 @@ const CATEGORIES = [
 
 const SCORES = [5, 4, 3, 2];
 
+// Маппинг для перевода категорий ошибок на понятный язык
+const ERROR_CATEGORIES_MAPPING = {
+  ACTIVE_REQUEST_EXISTS: 'Фаол ариза мавжуд (Уже в работе)',
+  DUPLICATE_FILE: 'Файл ичида такрорий (Дубликат в файле)',
+  DUPLICATE_DB: 'Базада такрорий (Дубликат в базе)',
+  INVALID_PHONE: 'Нотугри телефон ракам (Неверный номер)',
+  INVALID_DATES: 'Саналарда хатолик (Отрицательные или >15 дней)',
+  MISSING_DATA: 'Маълумот тулик эмас (Нет ФИО/Телефона)',
+  OTHER: 'Бошка хатоликлар (Прочие)',
+};
+
 @Injectable()
 export class ReportsService {
   private readonly logger = new Logger(ReportsService.name);
@@ -31,6 +45,9 @@ export class ReportsService {
     private reportRepository: Repository<Report>,
     @InjectRepository(PatientRequest)
     private requestRepository: Repository<PatientRequest>,
+    // 👇 ДОБАВЛЯЕМ РЕПОЗИТОРИЙ ОШИБОК
+    @InjectRepository(ImportErrorLog)
+    private errorLogRepository: Repository<ImportErrorLog>,
   ) {}
 
   async findAll() {
@@ -44,8 +61,9 @@ export class ReportsService {
     const end = new Date(dto.endDate);
     end.setHours(23, 59, 59, 999);
 
-    // --- ЛОГИКА ВЫБОРКИ ---
-    // Фильтруем по arrivalDate, исключаем NEW и CONTACTED
+    // ==========================================
+    // 1. ВЫБОРКА ОСНОВНЫХ ДАННЫХ И СОЗДАНИЕ КНИГИ
+    // ==========================================
     const requests = await this.requestRepository.find({
       where: {
         arrivalDate: Between(start, end),
@@ -54,239 +72,516 @@ export class ReportsService {
       relations: ['patient', 'feedback', 'feedback.evidenceMessages'],
     });
 
-    // --- СТРУКТУРА EXCEL ИЗ ВАШЕГО КОДА ---
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Отчет');
+
+    // --- ВКЛАДКА 1: ОСНОВНОЙ ОТЧЕТ ---
+    const worksheet = workbook.addWorksheet('Асосий хисобот (Отчет)');
 
     const dateRangeStr = `с ${format(start, 'dd.MM.yyyy')} по ${format(end, 'dd.MM.yyyy')}`;
-    const titleText = `ПОКАЗАТЕЛИ ОБРАТНОЙ СВЯЗИ ПО ДАТЕ ЗАЕЗДА ЗА ПЕРИОД ${dateRangeStr}`;
+    const titleText = `ОРЗУ МЕДИКАЛ клиникаларининг ${dateRangeStr} ётган беморларнинг кайта алокага олинганлар буйича курсаткичлари тугрисида`;
 
-    // Всего колонок: 14 базовых + 24 (счетчик) + 24 (проценты) + 2 (ссылки) = 64 колонки (A - BL)
     worksheet.mergeCells('A1:BL1');
     const titleRow = worksheet.getCell('A1');
     titleRow.value = titleText.toUpperCase();
     titleRow.font = { name: 'Times New Roman', size: 12, bold: true };
-    titleRow.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    titleRow.alignment = {
+      vertical: 'middle',
+      horizontal: 'center',
+      wrapText: true,
+    };
     worksheet.getRow(1).height = 40;
 
     worksheet.mergeCells('A2:BL2');
     const subTitleRow = worksheet.getCell('A2');
-    subTitleRow.value = 'С П Р А В К А';
+    subTitleRow.value = 'М А Ъ Л У М О Т Н О М А';
     subTitleRow.font = { name: 'Times New Roman', size: 14, bold: true };
     subTitleRow.alignment = { vertical: 'middle', horizontal: 'center' };
-    worksheet.getRow(2).height = 25;
 
-    worksheet.addRow([]); // Пустая строка
+    worksheet.addRow([]);
 
-    // Сборка заголовков
-    const baseHeaders = [
-      '№', 'Филиал', 'Всего пациентов', 'Дозвонились', '% Дозвона',
-      'Нет ответа', 'Неверный номер', 'Нет связи', 'Нет WhatsApp', 'Всего не дозвонились', '% Недозвона',
-      'Жалобы', 'Предложения', 'Не относится к клинике'
+    const baseHeadersRow1 = [
+      'Т/Р',
+      'Клиникалар',
+      'Келган Беморлар (жами)',
+      'Кайта алокага олинганлар (Дозвон)',
+      '%',
+      'телефон кутармади',
+      'нотугри номер',
+      'учирилган номер',
+      'WhatsApp йук',
+      'Алокага чикилмаган (жами)',
+      '%',
+      'Шикоятлар',
+      'Таклифлар',
+      'Клиникага тегишли эмас',
     ];
 
-    const countHeaders: string[] = [];
-    const pctHeaders: string[] = [];
-    CATEGORIES.forEach(cat => {
-      SCORES.forEach(s => {
-        countHeaders.push(`${cat.label} (${s})`);
-        pctHeaders.push(`${cat.label} (${s} %)`);
+    const ratingHeadersCount: string[] = [];
+    const ratingHeadersPct: string[] = [];
+    CATEGORIES.forEach((cat) => {
+      SCORES.forEach((s) => {
+        ratingHeadersCount.push(`${cat.label} (${s})`);
+        ratingHeadersPct.push(`${cat.label} (${s} %)`);
       });
     });
 
-    const linkHeaders = ['Ссылка (Жалоба)', 'Ссылка (Предложение)'];
-    const fullHeaders = [...baseHeaders, ...countHeaders, ...pctHeaders, ...linkHeaders];
+    const linkHeaders = ['Шикоят файллари', 'Бошка файллар'];
+    const fullHeaders = [
+      ...baseHeadersRow1,
+      ...ratingHeadersCount,
+      ...ratingHeadersPct,
+      ...linkHeaders,
+    ];
 
     const headerRow = worksheet.addRow(fullHeaders);
     headerRow.font = { bold: true };
     headerRow.eachCell((cell) => {
-      cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
-      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'D9D9D9' } };
+      cell.border = {
+        top: { style: 'thin' },
+        left: { style: 'thin' },
+        bottom: { style: 'thin' },
+        right: { style: 'thin' },
+      };
+      cell.alignment = {
+        horizontal: 'center',
+        vertical: 'middle',
+        wrapText: true,
+        textRotation: 90,
+      };
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'D9D9D9' },
+      };
     });
-    worksheet.getRow(4).height = 80;
+    for (let i = 1; i <= 14; i++) {
+      headerRow.getCell(i).alignment = {
+        horizontal: 'center',
+        vertical: 'middle',
+        wrapText: true,
+      };
+    }
+    worksheet.getRow(4).height = 120;
 
-    // Глобальные счетчики
-    const globalStats = {
-      totalPatients: 0, contactedCount: 0, noAnswer: 0, wrongNumber: 0, noConnection: 0, noWhatsApp: 0,
-      notContactedTotal: 0, complaints: 0, suggestions: 0, notRelated: 0,
-      points: {} as Record<string, number>,
+    const branchList = [
+      ...new Set(requests.map((r) => r.branch).filter(Boolean)),
+    ];
+    const totals = {
+      processed: 0,
+      success: 0,
+      noAnswer: 0,
+      unreachable: 0,
+      wrongNum: 0,
+      noWa: 0,
+      feedNeg: 0,
+      feedPos: 0,
+      feedNotRel: 0,
+      ratingsCount: {} as Record<string, number>,
     };
 
-    const branchList = [...new Set(requests.map((r) => r.branch).filter(Boolean))];
-
     branchList.forEach((branch, index) => {
-      const branchPatients = requests.filter((p) => p.branch === branch);
-      const totalPatients = branchPatients.length;
+      const bRequests = requests.filter((r) => r.branch === branch);
+      const bTotal = bRequests.length;
 
-      let bNoAnswer = 0, bWrongNumber = 0, bNoConnection = 0, bNoWhatsApp = 0;
-      let bComplaints = 0, bSuggestions = 0, bNotRelated = 0;
-      
+      const bNoAnswer = bRequests.filter(
+        (r) => r.status === RequestStatus.NO_ANSWER,
+      ).length;
+      const bUnreachable = bRequests.filter(
+        (r) => r.status === RequestStatus.UNREACHABLE,
+      ).length;
+      const bWrongNum = bRequests.filter(
+        (r) => r.status === RequestStatus.WRONG_NUMBER,
+      ).length;
+      const bNoWa = bRequests.filter(
+        (r) => r.status === RequestStatus.HAS_NOT_WHATSAPP,
+      ).length;
+      const bFailTotal = bNoAnswer + bUnreachable + bWrongNum + bNoWa;
+      const bSuccess = bTotal - bFailTotal;
+
+      const bFeedNeg = bRequests.filter(
+        (r) => r.status === RequestStatus.FEEDBACK_NEGATIVE,
+      ).length;
+      const bFeedPos = bRequests.filter(
+        (r) => r.status === RequestStatus.FEEDBACK_POSITIVE,
+      ).length;
+      const bFeedNotRel = bRequests.filter(
+        (r) => r.status === RequestStatus.FEEDBACK_NOT_RELATED,
+      ).length;
+
       const branchRatings: Record<string, number> = {};
-      const complaintLinks: string[] = [];
-      const suggestionLinks: string[] = [];
+      const linksNeg: string[] = [];
+      const linksOther: string[] = [];
 
-      branchPatients.forEach((p) => {
-        // Подсчет недозвонов
-        if (p.status === RequestStatus.NO_ANSWER) bNoAnswer++;
-        else if (p.status === RequestStatus.WRONG_NUMBER) bWrongNumber++;
-        else if (p.status === RequestStatus.UNREACHABLE) bNoConnection++;
-        else if (p.status === RequestStatus.HAS_NOT_WHATSAPP) bNoWhatsApp++;
-        
-        // Подсчет типов фидбека
-        else if (p.status === RequestStatus.FEEDBACK_NEGATIVE) bComplaints++;
-        else if (p.status === RequestStatus.FEEDBACK_POSITIVE) bSuggestions++;
-        else if (p.status === RequestStatus.FEEDBACK_NOT_RELATED) bNotRelated++;
+      const successRequests = bRequests.filter((r) =>
+        [
+          RequestStatus.ALL_OK,
+          RequestStatus.FEEDBACK_POSITIVE,
+          RequestStatus.FEEDBACK_NEGATIVE,
+          RequestStatus.FEEDBACK_NOT_RELATED,
+        ].includes(r.status),
+      );
 
-        // Если это успешный дозвон (ALL_OK, POSITIVE, NEGATIVE, NOT_RELATED)
-        if ([RequestStatus.ALL_OK, RequestStatus.FEEDBACK_POSITIVE, RequestStatus.FEEDBACK_NEGATIVE, RequestStatus.FEEDBACK_NOT_RELATED].includes(p.status)) {
-            
-            // --- ЛОГИКА ОЦЕНОК ---
-            CATEGORIES.forEach((cat) => {
-                let score = 5; // По умолчанию 5 (для ALL_OK, POSITIVE, NOT_RELATED)
-                
-                // Только для жалоб читаем реальные баллы
-                if (p.status === RequestStatus.FEEDBACK_NEGATIVE) {
-                    score = p.feedback?.ratings?.[cat.id] || 5;
-                }
-                
-                if (!SCORES.includes(score)) score = 5; // защита от неверных данных
+      successRequests.forEach((req) => {
+        CATEGORIES.forEach((cat) => {
+          let score = 5;
+          if (req.status === RequestStatus.FEEDBACK_NEGATIVE) {
+            score = req.feedback?.ratings?.[cat.id] || 5;
+          }
+          if (!SCORES.includes(score)) score = 5;
+          const key = `${cat.id}-${score}`;
+          branchRatings[key] = (branchRatings[key] || 0) + 1;
+          totals.ratingsCount[key] = (totals.ratingsCount[key] || 0) + 1;
+        });
 
-                const key = `${cat.id}-${score}`;
-                branchRatings[key] = (branchRatings[key] || 0) + 1;
-                globalStats.points[key] = (globalStats.points[key] || 0) + 1;
-            });
-
-            // Сбор ссылок на медиа-файлы
-            if (p.feedback?.evidenceMessages?.length > 0) {
-                const urls = p.feedback.evidenceMessages.map(e => e.mediaUrl).filter(Boolean);
-                if (p.status === RequestStatus.FEEDBACK_NEGATIVE) complaintLinks.push(...urls);
-                else suggestionLinks.push(...urls);
-            }
+        if (req.feedback?.evidenceMessages?.length > 0) {
+          const urls = req.feedback.evidenceMessages
+            .map((e) => e.mediaUrl)
+            .filter(Boolean);
+          if (req.status === RequestStatus.FEEDBACK_NEGATIVE)
+            linksNeg.push(...urls);
+          else linksOther.push(...urls);
         }
       });
 
-      const notContactedTotal = bNoAnswer + bWrongNumber + bNoConnection + bNoWhatsApp;
-      const bContacted = totalPatients - notContactedTotal;
-
-      const maxRows = Math.max(complaintLinks.length, suggestionLinks.length, 1);
+      const maxRows = Math.max(linksNeg.length, linksOther.length, 1);
       // @ts-ignore
       const startRowNumber = worksheet.lastRow.number + 1;
 
       for (let i = 0; i < maxRows; i++) {
         const rowValues = Array(fullHeaders.length + 1).fill(null);
-        
+
         if (i === 0) {
-          rowValues[1] = index + 1; rowValues[2] = branch; rowValues[3] = totalPatients;
-          rowValues[4] = bContacted; rowValues[5] = totalPatients > 0 ? bContacted / totalPatients : 0;
-          rowValues[6] = bNoAnswer; rowValues[7] = bWrongNumber; rowValues[8] = bNoConnection; rowValues[9] = bNoWhatsApp;
-          rowValues[10] = notContactedTotal; rowValues[11] = totalPatients > 0 ? notContactedTotal / totalPatients : 0;
-          rowValues[12] = bComplaints; rowValues[13] = bSuggestions; rowValues[14] = bNotRelated;
+          rowValues[1] = index + 1;
+          rowValues[2] = branch;
+          rowValues[3] = bTotal;
+          rowValues[4] = bSuccess;
+          rowValues[5] = bTotal ? bSuccess / bTotal : 0;
+          rowValues[6] = bNoAnswer;
+          rowValues[7] = bWrongNum;
+          rowValues[8] = bUnreachable;
+          rowValues[9] = bNoWa;
+          rowValues[10] = bFailTotal;
+          rowValues[11] = bTotal ? bFailTotal / bTotal : 0;
+          rowValues[12] = bFeedNeg;
+          rowValues[13] = bFeedPos;
+          rowValues[14] = bFeedNotRel;
 
           let colIndex = 15;
-          // Количественные баллы
-          CATEGORIES.forEach(cat => SCORES.forEach(s => {
+          CATEGORIES.forEach((cat) =>
+            SCORES.forEach((s) => {
               rowValues[colIndex++] = branchRatings[`${cat.id}-${s}`] || 0;
-          }));
-          // Проценты по баллам
-          CATEGORIES.forEach(cat => SCORES.forEach(s => {
+            }),
+          );
+          CATEGORIES.forEach((cat) =>
+            SCORES.forEach((s) => {
               const count = branchRatings[`${cat.id}-${s}`] || 0;
-              rowValues[colIndex++] = bContacted > 0 ? count / bContacted : 0;
-          }));
+              rowValues[colIndex++] = bSuccess > 0 ? count / bSuccess : 0;
+            }),
+          );
         }
 
-        const linkColStart = 15 + 48; // 14 базовых + 48 колонок баллов
-        if (complaintLinks[i]) rowValues[linkColStart] = { text: `Жалоба-${i+1}`, hyperlink: complaintLinks[i] };
-        if (suggestionLinks[i]) rowValues[linkColStart + 1] = { text: `Предложение-${i+1}`, hyperlink: suggestionLinks[i] };
+        const linkColStart = 15 + 48;
+        if (linksNeg[i])
+          rowValues[linkColStart] = {
+            text: `Жалоба-${i + 1}`,
+            hyperlink: linksNeg[i],
+          };
+        if (linksOther[i])
+          rowValues[linkColStart + 1] = {
+            text: `Доп Файл-${i + 1}`,
+            hyperlink: linksOther[i],
+          };
 
         const row = worksheet.addRow(rowValues.slice(1));
-        
-        // --- ПРИМЕНЯЕМ СТРУКТУРУ EXCEL ИЗ ВАШЕГО КОДА ---
+
         if (i === 0) {
-            row.getCell(5).numFmt = '0.0%';
-            row.getCell(11).numFmt = '0.0%';
-            for(let c = 15 + 24; c < 15 + 48; c++) {
-               row.getCell(c).numFmt = '0.0%';
-            }
+          row.getCell(5).numFmt = '0.0%';
+          row.getCell(11).numFmt = '0.0%';
+          for (let c = 15 + 24; c < 15 + 48; c++)
+            row.getCell(c).numFmt = '0.0%';
         }
 
         row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
-          cell.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
+          cell.border = {
+            top: { style: 'thin' },
+            left: { style: 'thin' },
+            bottom: { style: 'thin' },
+            right: { style: 'thin' },
+          };
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
-          
-          if (colNumber >= linkColStart - 1 && cell.value) cell.font = { color: { argb: '0000FF' }, underline: true };
-          // Очистка пустых значений (как в вашем коде)
+          if (colNumber >= linkColStart - 1 && cell.value)
+            cell.font = { color: { argb: '0000FF' }, underline: true };
           if (cell.value === 0 || cell.value === '0 (0.0%)') cell.value = '';
         });
       }
 
       if (maxRows > 1) {
         for (let col = 1; col <= fullHeaders.length - 2; col++) {
-          worksheet.mergeCells(startRowNumber, col, startRowNumber + maxRows - 1, col);
+          worksheet.mergeCells(
+            startRowNumber,
+            col,
+            startRowNumber + maxRows - 1,
+            col,
+          );
         }
       }
 
-      globalStats.totalPatients += totalPatients; globalStats.contactedCount += bContacted;
-      globalStats.noAnswer += bNoAnswer; globalStats.wrongNumber += bWrongNumber;
-      globalStats.noConnection += bNoConnection; globalStats.noWhatsApp += bNoWhatsApp;
-      globalStats.notContactedTotal += notContactedTotal;
-      globalStats.complaints += bComplaints; globalStats.suggestions += bSuggestions;
-      globalStats.notRelated += bNotRelated;
+      totals.processed += bTotal;
+      totals.success += bSuccess;
+      totals.noAnswer += bNoAnswer;
+      totals.unreachable += bUnreachable;
+      totals.wrongNum += bWrongNum;
+      totals.noWa += bNoWa;
+      totals.feedNeg += bFeedNeg;
+      totals.feedPos += bFeedPos;
+      totals.feedNotRel += bFeedNotRel;
     });
 
-    // --- ИТОГО ---
-    const gPctContacted = globalStats.totalPatients > 0 ? globalStats.contactedCount / globalStats.totalPatients : 0;
-    const gPctNotContacted = globalStats.totalPatients > 0 ? globalStats.notContactedTotal / globalStats.totalPatients : 0;
+    // --- ИТОГИ ОСНОВНОГО ОТЧЕТА ---
+    const gPctContacted =
+      totals.processed > 0 ? totals.success / totals.processed : 0;
+    const gFailTotal =
+      totals.noAnswer + totals.wrongNum + totals.unreachable + totals.noWa;
+    const gPctNotContacted =
+      totals.processed > 0 ? gFailTotal / totals.processed : 0;
 
     const totalRowValues = [
-        'ИТОГО', '', globalStats.totalPatients, globalStats.contactedCount, gPctContacted,
-        globalStats.noAnswer, globalStats.wrongNumber, globalStats.noConnection, globalStats.noWhatsApp, globalStats.notContactedTotal, gPctNotContacted,
-        globalStats.complaints, globalStats.suggestions, globalStats.notRelated
+      'ИТОГО',
+      '',
+      totals.processed,
+      totals.success,
+      gPctContacted,
+      totals.noAnswer,
+      totals.wrongNum,
+      totals.unreachable,
+      totals.noWa,
+      gFailTotal,
+      gPctNotContacted,
+      totals.feedNeg,
+      totals.feedPos,
+      totals.feedNotRel,
     ];
 
-    // Итого количества
-    CATEGORIES.forEach(cat => SCORES.forEach(s => {
-        totalRowValues.push(globalStats.points[`${cat.id}-${s}`] || 0);
-    }));
-    // Итого проценты
-    CATEGORIES.forEach(cat => SCORES.forEach(s => {
-        const count = globalStats.points[`${cat.id}-${s}`] || 0;
-        totalRowValues.push(globalStats.contactedCount > 0 ? count / globalStats.contactedCount : 0);
-    }));
+    CATEGORIES.forEach((cat) =>
+      SCORES.forEach((s) => {
+        totalRowValues.push(totals.ratingsCount[`${cat.id}-${s}`] || 0);
+      }),
+    );
+    CATEGORIES.forEach((cat) =>
+      SCORES.forEach((s) => {
+        const count = totals.ratingsCount[`${cat.id}-${s}`] || 0;
+        totalRowValues.push(totals.success > 0 ? count / totals.success : 0);
+      }),
+    );
 
     const totalRow = worksheet.addRow(totalRowValues);
     worksheet.mergeCells(`A${totalRow.number}:B${totalRow.number}`);
-    
-    totalRow.getCell(5).numFmt = '0.0%'; totalRow.getCell(11).numFmt = '0.0%';
-    for(let c = 15 + 24; c < 15 + 48; c++) totalRow.getCell(c).numFmt = '0.0%';
+
+    totalRow.getCell(5).numFmt = '0.0%';
+    totalRow.getCell(11).numFmt = '0.0%';
+    for (let c = 15 + 24; c < 15 + 48; c++) totalRow.getCell(c).numFmt = '0.0%';
 
     totalRow.font = { bold: true };
     totalRow.eachCell((cell) => {
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'BFBFBF' } }; // Цвет как в вашем коде
-        cell.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
-        cell.alignment = { horizontal: 'center', vertical: 'middle' };
-        if (cell.value === 0 || cell.value === '0 (0.0%)') cell.value = '';
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'BFBFBF' },
+      };
+      cell.border = {
+        top: { style: 'thin' },
+        left: { style: 'thin' },
+        bottom: { style: 'thin' },
+        right: { style: 'thin' },
+      };
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      if (cell.value === 0 || cell.value === '0 (0.0%)') cell.value = '';
     });
 
-    // Ширина колонок (как в вашем коде)
-    worksheet.columns.forEach((col, i) => { 
-        if (i === 1) col.width = 20; 
-        else if (i >= fullHeaders.length - 2) col.width = 25; 
-        else col.width = 8; 
+    worksheet.columns.forEach((col, i) => {
+      if (i === 1) col.width = 20;
+      else if (i >= fullHeaders.length - 2) col.width = 25;
+      else col.width = 8;
     });
 
-    // --- РУЧНОЕ СОХРАНЕНИЕ ---
+    // ==========================================
+    // 2. ВКЛАДКА 2: ОБЗОР И ДЕТАЛИЗАЦИЯ ОШИБОК ИМПОРТА
+    // ==========================================
+    const errorSheet = workbook.addWorksheet('Импорт хатоликлари (Ошибки)');
+
+    // Получаем ошибки за тот же период (по дате импорта)
+    const errorsLog = await this.errorLogRepository.find({
+      where: { createdAt: Between(start, end) },
+      order: { createdAt: 'DESC' },
+    });
+
+    const totalErrors = errorsLog.length;
+
+    // Сводная таблица (в процентах)
+    errorSheet.addRow([
+      'ИМПОРТ ҚИЛИШДАГИ ХАТОЛИКЛАР СТАТИСТИКАСИ (Статистика ошибок)',
+    ]);
+    errorSheet.mergeCells('A1:C1');
+    errorSheet.getCell('A1').font = { bold: true, size: 12 };
+    errorSheet.getCell('A1').alignment = { horizontal: 'center' };
+
+    errorSheet.addRow([
+      'Хатолик тури (Категория)',
+      'Сони (Кол-во)',
+      'Улуши (%)',
+    ]);
+    // @ts-ignore
+    errorSheet.lastRow.font = { bold: true };
+    // @ts-ignore
+    errorSheet.lastRow.eachCell((c) => {
+      c.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'D9D9D9' },
+      };
+      c.border = {
+        top: { style: 'thin' },
+        left: { style: 'thin' },
+        bottom: { style: 'thin' },
+        right: { style: 'thin' },
+      };
+    });
+
+    const categoryCounts: Record<string, number> = {};
+    errorsLog.forEach((e) => {
+      categoryCounts[e.category] = (categoryCounts[e.category] || 0) + 1;
+    });
+
+    Object.keys(ERROR_CATEGORIES_MAPPING).forEach((cat) => {
+      const count = categoryCounts[cat] || 0;
+      const pct = totalErrors > 0 ? count / totalErrors : 0;
+
+      const row = errorSheet.addRow([
+        ERROR_CATEGORIES_MAPPING[cat],
+        count,
+        pct,
+      ]);
+      row.getCell(3).numFmt = '0.0%';
+      row.eachCell(
+        (c) =>
+          (c.border = {
+            top: { style: 'thin' },
+            left: { style: 'thin' },
+            bottom: { style: 'thin' },
+            right: { style: 'thin' },
+          }),
+      );
+    });
+
+    const errTotalRow = errorSheet.addRow(['ЖАМИ (ИТОГО)', totalErrors, 1]);
+    errTotalRow.font = { bold: true };
+    errTotalRow.getCell(3).numFmt = '0.0%';
+    errTotalRow.eachCell(
+      (c) =>
+        (c.border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'thin' },
+          right: { style: 'thin' },
+        }),
+    );
+
+    errorSheet.addRow([]); // Отступ
+
+    // Детализация всех ошибок
+    errorSheet.addRow(['ХАТОЛИКЛАР ТАФСИЛОТИ (Детализация ошибок)']);
+    errorSheet.mergeCells(
+      // @ts-ignore
+      `A${errorSheet.lastRow.number}:G${errorSheet.lastRow.number}`,
+    );
+    // @ts-ignore
+    errorSheet.lastRow.font = { bold: true, size: 12 };
+    // @ts-ignore
+    errorSheet.lastRow.alignment = { horizontal: 'center' };
+
+    const detailHeaders = [
+      '№',
+      'Сана (Дата импорта)',
+      'Қатор (Строка Excel)',
+      'Ф.И.Ш (Имя)',
+      'Телефон',
+      'Филиал',
+      'Изох (Ошибка)',
+    ];
+    const detRow = errorSheet.addRow(detailHeaders);
+    detRow.font = { bold: true };
+    detRow.eachCell((c) => {
+      c.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'D9D9D9' },
+      };
+      c.border = {
+        top: { style: 'thin' },
+        left: { style: 'thin' },
+        bottom: { style: 'thin' },
+        right: { style: 'thin' },
+      };
+      c.alignment = { horizontal: 'center', vertical: 'middle' };
+    });
+
+    errorsLog.forEach((e, i) => {
+      const mappedCategory = ERROR_CATEGORIES_MAPPING[e.category] || e.category;
+      const errorText = `[${mappedCategory}] - ${e.errorMessages.join('; ')}`;
+
+      const row = errorSheet.addRow([
+        i + 1,
+        format(e.createdAt, 'dd.MM.yyyy HH:mm'),
+        e.lineNumber,
+        e.name || '-',
+        e.phone || '-',
+        e.branch || '-',
+        errorText,
+      ]);
+
+      row.eachCell(
+        (c) =>
+          (c.border = {
+            top: { style: 'thin' },
+            left: { style: 'thin' },
+            bottom: { style: 'thin' },
+            right: { style: 'thin' },
+          }),
+      );
+    });
+
+    // Ширина колонок для второй вкладки
+    errorSheet.columns.forEach((c, i) => {
+      if (i === 0) c.width = 6;
+      else if (i === 1) c.width = 20;
+      else if (i === 3)
+        c.width = 30; // Имя
+      else if (i === 4)
+        c.width = 20; // Телефон
+      else if (i === 5)
+        c.width = 25; // Филиал
+      else if (i === 6)
+        c.width = 70; // Текст ошибки
+      else c.width = 15;
+    });
+
+    // ==========================================
+    // 3. СОХРАНЕНИЕ ФАЙЛА
+    // ==========================================
     const uint8Array = await workbook.xlsx.writeBuffer();
     const buffer = Buffer.from(uint8Array);
-    
+
     const fileName = `Отчет_${format(start, 'dd.MM.yyyy')}-${format(end, 'dd.MM.yyyy')}_${Date.now()}.xlsx`;
     const uploadDir = path.join(process.cwd(), 'uploads', 'reports');
     await fs.mkdir(uploadDir, { recursive: true });
-    
+
     const filePath = path.join(uploadDir, fileName);
     await fs.writeFile(filePath, buffer);
-    
-    const backendUrl = process.env.UPLOAD_URL || process.env.BACKEND_URL || 'http://localhost:3000';
+
+    const backendUrl =
+      process.env.UPLOAD_URL ||
+      process.env.BACKEND_URL ||
+      'http://localhost:3000';
     const fileUrl = `${backendUrl}/uploads/reports/${fileName}`;
 
     const report = this.reportRepository.create({
@@ -294,25 +589,32 @@ export class ReportsService {
       fileUrl: fileUrl,
       startDate: start,
       endDate: end,
-      status: 'ready', 
+      status: 'ready',
     });
 
     return this.reportRepository.save(report);
   }
 
   async remove(id: string) {
-    const report = await this.reportRepository.findOne({ where: { id }});
+    const report = await this.reportRepository.findOne({ where: { id } });
     if (report) {
-       try {
-           const fileName = report.fileUrl.split('/').pop();
-           if (fileName) {
-               const filePath = path.join(process.cwd(), 'uploads', 'reports', fileName);
-               await fs.unlink(filePath);
-           }
-       } catch (e) {
-           this.logger.warn(`Could not delete file for report ${id}: ${e.message}`);
-       }
-       return this.reportRepository.delete(id);
+      try {
+        const fileName = report.fileUrl.split('/').pop();
+        if (fileName) {
+          const filePath = path.join(
+            process.cwd(),
+            'uploads',
+            'reports',
+            fileName,
+          );
+          await fs.unlink(filePath);
+        }
+      } catch (e) {
+        this.logger.warn(
+          `Could not delete file for report ${id}: ${e.message}`,
+        );
+      }
+      return this.reportRepository.delete(id);
     }
   }
 }
