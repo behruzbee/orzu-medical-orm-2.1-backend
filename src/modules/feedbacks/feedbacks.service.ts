@@ -161,7 +161,7 @@ export class FeedbacksService {
           evidenceText =
             '\n\n📎 Вложения:\n' +
             processedEvidence
-              .map((e, index) => `${index + 1}. Файл: ${e.mediaUrl}`)
+              .map((e, index) => `${index + 1}. Файл или сообщения: ${e.mediaUrl || e.text}`)
               .join('\n');
         }
 
