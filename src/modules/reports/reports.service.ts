@@ -233,7 +233,6 @@ export class ReportsService {
       true,
     );
 
-    // ИСПРАВЛЕНИЕ ЗАГОЛОВКА ДЛЯ ДРУГИХ ЖАЛОБ
     setupHeader(
       65,
       69,
@@ -266,7 +265,6 @@ export class ReportsService {
       feedPos: 0,
       feedNotRel: 0,
       ratingsCount: {} as Record<string, number>,
-      allRatingsCount: {} as Record<number, number>,
     };
 
     branchList.forEach((branch, index) => {
@@ -318,17 +316,8 @@ export class ReportsService {
       ).length;
 
       const branchRatings: Record<string, number> = {};
-      const branchTotalScores: Record<number, number> = {
-        5: 0,
-        4: 0,
-        3: 0,
-        2: 0,
-      };
 
-      // ИСПРАВЛЕНИЕ ПОДСЧЕТА 'ВСЕГО'
       successRequests.forEach((req) => {
-        let reqTotalScore = 0; // Сумма всех оценок для 1 пациента
-
         CATEGORIES.forEach((cat) => {
           let score = 5;
           if (req.status === RequestStatus.FEEDBACK_NEGATIVE) {
@@ -339,18 +328,22 @@ export class ReportsService {
           const key = `${cat.id}-${score}`;
           branchRatings[key] = (branchRatings[key] || 0) + 1;
           totals.ratingsCount[key] = (totals.ratingsCount[key] || 0) + 1;
-
-          reqTotalScore += score;
         });
+      });
 
-        // Высчитываем среднюю общую оценку пациента
-        let overallScore = Math.round(reqTotalScore / CATEGORIES.length);
-        if (!SCORES.includes(overallScore)) overallScore = 5;
-
-        // Прибавляем строго +1 за одного пациента в ИТОГО
-        branchTotalScores[overallScore] += 1;
-        totals.allRatingsCount[overallScore] =
-          (totals.allRatingsCount[overallScore] || 0) + 1;
+      // 🔥 ИСПРАВЛЕНИЕ: Вычисляем ВСЕГО (Делим сумму баллов на кол-во категорий 5)
+      const branchTotalScores: Record<number, number> = {
+        5: 0,
+        4: 0,
+        3: 0,
+        2: 0,
+      };
+      SCORES.forEach((s) => {
+        let sum = 0;
+        CATEGORIES.forEach((cat) => {
+          sum += branchRatings[`${cat.id}-${s}`] || 0;
+        });
+        branchTotalScores[s] = sum / CATEGORIES.length; // Делим на 5
       });
 
       const rowValues = Array(70).fill(null);
@@ -374,6 +367,7 @@ export class ReportsService {
       rowValues[16] = bHandedOver ? bCorrectTotal / bHandedOver : 0;
 
       let cIdx = 17;
+      // Оценки по категориям
       CATEGORIES.forEach((cat) => {
         SCORES.forEach((s) => {
           const count = branchRatings[`${cat.id}-${s}`] || 0;
@@ -381,6 +375,7 @@ export class ReportsService {
           rowValues[cIdx++] = bObzvon > 0 ? count / bObzvon : 0;
         });
       });
+      // Оценки ВСЕГО
       SCORES.forEach((s) => {
         const count = branchTotalScores[s] || 0;
         rowValues[cIdx++] = count;
@@ -431,7 +426,16 @@ export class ReportsService {
       totals.feedNotRel += bFeedNotRel;
     });
 
-    // ИТОГО
+    // ИТОГО (Вычисление глобального ВСЕГО)
+    const grandTotalScores: Record<number, number> = { 5: 0, 4: 0, 3: 0, 2: 0 };
+    SCORES.forEach((s) => {
+      let sum = 0;
+      CATEGORIES.forEach((cat) => {
+        sum += totals.ratingsCount[`${cat.id}-${s}`] || 0;
+      });
+      grandTotalScores[s] = sum / CATEGORIES.length; // Делим на 5
+    });
+
     const totalRowValues = Array(70).fill(null);
     totalRowValues[1] = 'ИТОГО';
     totalRowValues[3] = null;
@@ -466,8 +470,9 @@ export class ReportsService {
           totals.obzvon > 0 ? count / totals.obzvon : 0;
       });
     });
+    // Заполняем глобальное ВСЕГО
     SCORES.forEach((s) => {
-      const count = totals.allRatingsCount[s] || 0;
+      const count = grandTotalScores[s] || 0;
       totalRowValues[totalCIdx++] = count;
       totalRowValues[totalCIdx++] =
         totals.obzvon > 0 ? count / totals.obzvon : 0;
