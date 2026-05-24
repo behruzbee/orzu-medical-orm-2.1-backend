@@ -237,13 +237,7 @@ export class ReportsService {
       65,
       69,
       'жалобы',
-      [
-        'кол жалоб',
-        '%',
-        'предложение',
-        'жалобы каторые не относиться к клинике',
-        'ссылка',
-      ],
+      ['кол жалоб', '%', 'предложение', 'жалобы каторые не относиться к клинике', 'ссылка'],
       C_PINK,
       true,
     );
@@ -265,6 +259,7 @@ export class ReportsService {
       feedPos: 0,
       feedNotRel: 0,
       ratingsCount: {} as Record<string, number>,
+      allRatingsCount: {} as Record<number, number>, // Глобальный счетчик ВСЕГО
     };
 
     branchList.forEach((branch, index) => {
@@ -316,8 +311,12 @@ export class ReportsService {
       ).length;
 
       const branchRatings: Record<string, number> = {};
+      const branchTotalScores: Record<number, number> = { 5: 0, 4: 0, 3: 0, 2: 0 };
 
+      // 🔥 ИСПРАВЛЕНИЕ ЛОГИКИ ОЦЕНОК "ВСЕГО"
       successRequests.forEach((req) => {
+        let patientOverallScore = 5; // По умолчанию 5
+
         CATEGORIES.forEach((cat) => {
           let score = 5;
           if (req.status === RequestStatus.FEEDBACK_NEGATIVE) {
@@ -325,46 +324,41 @@ export class ReportsService {
           }
           if (!SCORES.includes(score)) score = 5;
 
+          // Подсчет по конкретной категории
           const key = `${cat.id}-${score}`;
           branchRatings[key] = (branchRatings[key] || 0) + 1;
           totals.ratingsCount[key] = (totals.ratingsCount[key] || 0) + 1;
-        });
-      });
 
-      // 🔥 ИСПРАВЛЕНИЕ: Вычисляем ВСЕГО (Делим сумму баллов на кол-во категорий 5)
-      const branchTotalScores: Record<number, number> = {
-        5: 0,
-        4: 0,
-        3: 0,
-        2: 0,
-      };
-      SCORES.forEach((s) => {
-        let sum = 0;
-        CATEGORIES.forEach((cat) => {
-          sum += branchRatings[`${cat.id}-${s}`] || 0;
+          // Определяем минимальную (худшую) оценку пациента
+          if (score < patientOverallScore) {
+            patientOverallScore = score;
+          }
         });
-        branchTotalScores[s] = sum / CATEGORIES.length; // Делим на 5
+
+        // 1 пациент дает строго 1 голос в колонке ВСЕГО по его минимальной оценке
+        branchTotalScores[patientOverallScore] += 1;
+        totals.allRatingsCount[patientOverallScore] = (totals.allRatingsCount[patientOverallScore] || 0) + 1;
       });
 
       const rowValues = Array(70).fill(null);
       rowValues[1] = index + 1;
       rowValues[2] = branch;
-      rowValues[3] = null;
+      rowValues[3] = null; 
       rowValues[4] = bHandedOver;
-      rowValues[5] = null;
+      rowValues[5] = null; 
 
       rowValues[6] = bWrongNumTotal;
-      rowValues[7] = bEmpNum;
+      rowValues[7] = bEmpNum; 
       rowValues[8] = bNoWa;
       rowValues[9] = bIncorrectTotal;
-      rowValues[10] = bHandedOver ? bIncorrectTotal / bHandedOver : 0;
+      rowValues[10] = bHandedOver ? bIncorrectTotal / bHandedOver : 0; 
 
       rowValues[11] = bObzvon;
-      rowValues[12] = bHandedOver ? bObzvon / bHandedOver : 0;
+      rowValues[12] = bHandedOver ? bObzvon / bHandedOver : 0; 
       rowValues[13] = bNoAnswer;
       rowValues[14] = bUnreachable;
       rowValues[15] = bCorrectTotal;
-      rowValues[16] = bHandedOver ? bCorrectTotal / bHandedOver : 0;
+      rowValues[16] = bHandedOver ? bCorrectTotal / bHandedOver : 0; 
 
       let cIdx = 17;
       // Оценки по категориям
@@ -375,6 +369,7 @@ export class ReportsService {
           rowValues[cIdx++] = bObzvon > 0 ? count / bObzvon : 0;
         });
       });
+      
       // Оценки ВСЕГО
       SCORES.forEach((s) => {
         const count = branchTotalScores[s] || 0;
@@ -383,19 +378,17 @@ export class ReportsService {
       });
 
       rowValues[65] = bFeedNeg;
-      rowValues[66] = bObzvon ? bFeedNeg / bObzvon : 0;
+      rowValues[66] = bObzvon ? bFeedNeg / bObzvon : 0; 
       rowValues[67] = bFeedPos;
       rowValues[68] = bFeedNotRel;
-      rowValues[69] = 'Вкладка "Ссылки"';
+      rowValues[69] = 'Вкладка "Ссылки"'; 
 
       const row = worksheet.addRow(rowValues.slice(1));
 
-      [10, 12, 16, 66].forEach((c) => {
-        row.getCell(c).numFmt = '0.0%';
-      });
-
+      [10, 12, 16, 66].forEach((c) => { row.getCell(c).numFmt = '0.0%'; });
+      
       let pIdx = 17;
-      for (let i = 0; i < 24; i++) {
+      for (let i = 0; i < 24; i++) { // 6 * 4 колонок оценок (включая ВСЕГО)
         pIdx++;
         row.getCell(pIdx++).numFmt = '0.0%';
       }
@@ -404,11 +397,7 @@ export class ReportsService {
         cell.border = borderStyle;
         cell.alignment = alignCenter;
         if (colNumber === 69) {
-          cell.font = {
-            color: { argb: '0000FF' },
-            underline: true,
-            italic: true,
-          };
+          cell.font = { color: { argb: '0000FF' }, underline: true, italic: true };
         }
         if (cell.value === 0 || cell.value === '0 (0.0%)') cell.value = '';
       });
@@ -426,56 +415,40 @@ export class ReportsService {
       totals.feedNotRel += bFeedNotRel;
     });
 
-    // ИТОГО (Вычисление глобального ВСЕГО)
-    const grandTotalScores: Record<number, number> = { 5: 0, 4: 0, 3: 0, 2: 0 };
-    SCORES.forEach((s) => {
-      let sum = 0;
-      CATEGORIES.forEach((cat) => {
-        sum += totals.ratingsCount[`${cat.id}-${s}`] || 0;
-      });
-      grandTotalScores[s] = sum / CATEGORIES.length; // Делим на 5
-    });
-
+    // ИТОГО
     const totalRowValues = Array(70).fill(null);
     totalRowValues[1] = 'ИТОГО';
     totalRowValues[3] = null;
     totalRowValues[4] = totals.handedOver;
     totalRowValues[5] = null;
-
+    
     totalRowValues[6] = totals.wrongNum;
     totalRowValues[7] = null;
     totalRowValues[8] = totals.noWa;
     totalRowValues[9] = totals.incorrectTotal;
-    totalRowValues[10] = totals.handedOver
-      ? totals.incorrectTotal / totals.handedOver
-      : 0;
+    totalRowValues[10] = totals.handedOver ? totals.incorrectTotal / totals.handedOver : 0;
 
     totalRowValues[11] = totals.obzvon;
-    totalRowValues[12] = totals.handedOver
-      ? totals.obzvon / totals.handedOver
-      : 0;
+    totalRowValues[12] = totals.handedOver ? totals.obzvon / totals.handedOver : 0;
     totalRowValues[13] = totals.noAnswer;
     totalRowValues[14] = totals.unreachable;
     totalRowValues[15] = totals.correctTotal;
-    totalRowValues[16] = totals.handedOver
-      ? totals.correctTotal / totals.handedOver
-      : 0;
+    totalRowValues[16] = totals.handedOver ? totals.correctTotal / totals.handedOver : 0;
 
     let totalCIdx = 17;
     CATEGORIES.forEach((cat) => {
       SCORES.forEach((s) => {
         const count = totals.ratingsCount[`${cat.id}-${s}`] || 0;
         totalRowValues[totalCIdx++] = count;
-        totalRowValues[totalCIdx++] =
-          totals.obzvon > 0 ? count / totals.obzvon : 0;
+        totalRowValues[totalCIdx++] = totals.obzvon > 0 ? count / totals.obzvon : 0;
       });
     });
-    // Заполняем глобальное ВСЕГО
+    
+    // Глобальное ВСЕГО
     SCORES.forEach((s) => {
-      const count = grandTotalScores[s] || 0;
+      const count = totals.allRatingsCount[s] || 0;
       totalRowValues[totalCIdx++] = count;
-      totalRowValues[totalCIdx++] =
-        totals.obzvon > 0 ? count / totals.obzvon : 0;
+      totalRowValues[totalCIdx++] = totals.obzvon > 0 ? count / totals.obzvon : 0;
     });
 
     totalRowValues[65] = totals.feedNeg;
@@ -494,10 +467,8 @@ export class ReportsService {
       if (cell.value === 0 || cell.value === '0 (0.0%)') cell.value = '';
     });
 
-    [10, 12, 16, 66].forEach((c) => {
-      totalRow.getCell(c).numFmt = '0.0%';
-    });
-
+    [10, 12, 16, 66].forEach((c) => { totalRow.getCell(c).numFmt = '0.0%'; });
+    
     totalCIdx = 17;
     for (let i = 0; i < 24; i++) {
       totalCIdx++;
@@ -506,7 +477,7 @@ export class ReportsService {
 
     worksheet.columns.forEach((col, i) => {
       if (i === 1) col.width = 20;
-      else if (i === 68) col.width = 18;
+      else if (i === 68) col.width = 18; 
       else col.width = 7.5;
     });
 
@@ -514,26 +485,13 @@ export class ReportsService {
     // 3. ВКЛАДКА 2: ССЫЛКИ И МЕДИА
     // ==========================================
     const linksSheet = workbook.addWorksheet('Хаволалар (Ссылки)');
-    linksSheet.addRow([
-      'ДЕТАЛИЗАЦИЯ ЖАЛОБ И ПРЕДЛОЖЕНИЙ (ССЫЛКИ TRELLO И ФАЙЛЫ)',
-    ]);
+    linksSheet.addRow(['ДЕТАЛИЗАЦИЯ ЖАЛОБ И ПРЕДЛОЖЕНИЙ (ССЫЛКИ TRELLO И ФАЙЛЫ)']);
     linksSheet.mergeCells('A1:G1');
     linksSheet.getCell('A1').font = { bold: true, size: 12 };
-    linksSheet.getCell('A1').alignment = {
-      horizontal: 'center',
-      vertical: 'middle',
-    };
+    linksSheet.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' };
     linksSheet.getRow(1).height = 30;
 
-    const linkHeaders = [
-      '№',
-      'Филиал',
-      'Бемор (Пациент)',
-      'Телефон',
-      'Тип',
-      'Trello URL',
-      'Файлы (Медиа)',
-    ];
+    const linkHeaders = ['№', 'Филиал', 'Бемор (Пациент)', 'Телефон', 'Тип', 'Trello URL', 'Файлы (Медиа)'];
     const lRow = linksSheet.addRow(linkHeaders);
     lRow.eachCell((c) => {
       c.fill = fillStyle(C_GRAY);
@@ -556,8 +514,7 @@ export class ReportsService {
       const itemsToPrint = bReqs.filter(
         (r) =>
           r.feedback?.trelloUrl ||
-          (r.feedback?.evidenceMessages &&
-            r.feedback.evidenceMessages.length > 0),
+          (r.feedback?.evidenceMessages && r.feedback.evidenceMessages.length > 0),
       );
 
       if (itemsToPrint.length === 0) return;
@@ -617,11 +574,11 @@ export class ReportsService {
 
     linksSheet.columns.forEach((c, i) => {
       if (i === 0) c.width = 6;
-      else if (i === 1) c.width = 20;
-      else if (i === 2) c.width = 30;
-      else if (i === 3) c.width = 20;
-      else if (i === 4) c.width = 25;
-      else c.width = 25;
+      else if (i === 1) c.width = 20; 
+      else if (i === 2) c.width = 30; 
+      else if (i === 3) c.width = 20; 
+      else if (i === 4) c.width = 25; 
+      else c.width = 25; 
     });
 
     // ==========================================
@@ -635,11 +592,7 @@ export class ReportsService {
     errorSheet.getCell('A1').font = { bold: true, size: 12 };
     errorSheet.getCell('A1').alignment = { horizontal: 'center' };
 
-    errorSheet.addRow([
-      'Хатолик тури (Категория)',
-      'Сони (Кол-во)',
-      'Улуши (%)',
-    ]);
+    errorSheet.addRow(['Хатолик тури (Категория)', 'Сони (Кол-во)', 'Улуши (%)']);
     // @ts-ignore
     errorSheet.lastRow.font = { bold: true };
     // @ts-ignore
@@ -682,14 +635,7 @@ export class ReportsService {
     errorSheet.lastRow.alignment = { horizontal: 'center' };
 
     const detRow = errorSheet.addRow([
-      '№',
-      'Келган сана',
-      'Юкланган сана',
-      'Қатор (Excel)',
-      'Ф.И.Ш (Имя)',
-      'Телефон',
-      'Филиал',
-      'Изох (Ошибка)',
+      '№', 'Келган сана', 'Юкланган сана', 'Қатор (Excel)', 'Ф.И.Ш (Имя)', 'Телефон', 'Филиал', 'Изох (Ошибка)',
     ]);
     detRow.font = { bold: true };
     detRow.eachCell((c) => {
@@ -699,10 +645,7 @@ export class ReportsService {
     });
 
     errorsLog.forEach((e, i) => {
-      const mappedCategory =
-        ERROR_CATEGORIES_MAPPING[
-          e.category as keyof typeof ERROR_CATEGORIES_MAPPING
-        ] || e.category;
+      const mappedCategory = ERROR_CATEGORIES_MAPPING[e.category as keyof typeof ERROR_CATEGORIES_MAPPING] || e.category;
       const row = errorSheet.addRow([
         i + 1,
         format(e.arrivalDate, 'dd.MM.yyyy'),
@@ -739,10 +682,7 @@ export class ReportsService {
     const filePath = path.join(uploadDir, fileName);
     await fs.writeFile(filePath, buffer);
 
-    const backendUrl =
-      process.env.UPLOAD_URL ||
-      process.env.BACKEND_URL ||
-      'http://localhost:3000';
+    const backendUrl = process.env.UPLOAD_URL || process.env.BACKEND_URL || 'http://localhost:3000';
     return this.reportRepository.save(
       this.reportRepository.create({
         name: fileName,
@@ -760,14 +700,10 @@ export class ReportsService {
       try {
         const fileName = report.fileUrl.split('/').pop();
         if (fileName) {
-          await fs.unlink(
-            path.join(process.cwd(), 'uploads', 'reports', fileName),
-          );
+          await fs.unlink(path.join(process.cwd(), 'uploads', 'reports', fileName));
         }
       } catch (e: any) {
-        this.logger.warn(
-          `Could not delete file for report ${id}: ${e.message}`,
-        );
+        this.logger.warn(`Could not delete file for report ${id}: ${e.message}`);
       }
       return this.reportRepository.delete(id);
     }
