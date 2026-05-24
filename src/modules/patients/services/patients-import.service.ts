@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, LessThan } from 'typeorm';
+import { Repository, In, LessThan, ILike, FindOptionsWhere, Between } from 'typeorm';
 import * as xlsx from 'xlsx';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -382,7 +382,7 @@ export class PatientsImportService {
       DUPLICATE_FILE: 0,
       INVALID_PHONE: 0,
       MISSING_DATA: 0,
-      INVALID_DATES: 0, 
+      INVALID_DATES: 0,
       OTHER: 0,
     };
 
@@ -468,5 +468,59 @@ export class PatientsImportService {
         departureIndex = idx;
     });
     return { fioIndex, phoneIndex, branchIndex, arrivalIndex, departureIndex };
+  }
+
+ async getImportErrors(
+    page: number = 1,
+    limit: number = 20,
+    search?: string,
+    category?: string,
+    branch?: string,
+    startDate?: string, 
+    endDate?: string,  
+  ) {
+    const baseCondition: FindOptionsWhere<ImportErrorLog> = {};
+
+    if (category) {
+      baseCondition.category = category;
+    }
+
+    if (branch) {
+      baseCondition.branch = branch;
+    }
+
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0); 
+      
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999); 
+      
+      baseCondition.arrivalDate = Between(start, end);
+    }
+
+    let whereClause: FindOptionsWhere<ImportErrorLog> | FindOptionsWhere<ImportErrorLog>[] = baseCondition;
+
+    if (search) {
+      whereClause = [
+        { ...baseCondition, name: ILike(`%${search}%`) },
+        { ...baseCondition, phone: ILike(`%${search}%`) },
+      ];
+    }
+
+    const [data, total] = await this.errorLogRepository.findAndCount({
+      where: whereClause,
+      order: { createdAt: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 }

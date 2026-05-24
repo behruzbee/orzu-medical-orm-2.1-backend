@@ -132,6 +132,27 @@ export class RequestsController {
     return this.patientsImportService.getPreview(sessionId);
   }
 
+  @Get('import/errors')
+  async getImportErrors(
+    @Query('page') page: string,
+    @Query('limit') limit: string,
+    @Query('search') search?: string,
+    @Query('category') category?: string,
+    @Query('branch') branch?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.patientsImportService.getImportErrors(
+      page ? parseInt(page, 10) : 1,
+      limit ? parseInt(limit, 10) : 20,
+      search,
+      category,
+      branch,
+      startDate,
+      endDate,
+    );
+  }
+
   @Post('import/:sessionId/commit')
   async commitImport(@Param('sessionId') sessionId: string) {
     return this.patientsImportService.commitImport(sessionId);

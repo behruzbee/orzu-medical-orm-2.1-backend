@@ -13,12 +13,11 @@ import { GenerateReportDto } from './dto/generate-report.dto';
 import { ImportErrorLog } from '../patients/entities/import-error-log.entity';
 
 const CATEGORIES = [
-  { id: 'doctors', label: 'Врачлар тугрисида' },
-  { id: 'nurses', label: 'Хамширалар тугрисида' },
-  { id: 'cleanliness', label: 'Тозалик тугрисида' },
-  { id: 'food', label: 'Ошхона ва ошпазлар' },
-  { id: 'reception', label: 'Регистратура' },
-  { id: 'clinic', label: 'Жами клиника' },
+  { id: 'doctors', prefix: 'врачи' },
+  { id: 'nurses', prefix: 'медсестры' },
+  { id: 'cleanliness', prefix: 'чистота' },
+  { id: 'food', prefix: 'кухня' },
+  { id: 'reception', prefix: 'общие вопросы' },
 ];
 
 const SCORES = [5, 4, 3, 2];
@@ -43,7 +42,7 @@ export class ReportsService {
     @InjectRepository(PatientRequest)
     private requestRepository: Repository<PatientRequest>,
     @InjectRepository(ImportErrorLog)
-    private errorLogRepository: Repository<ImportErrorLog>, 
+    private errorLogRepository: Repository<ImportErrorLog>,
   ) {}
 
   async findAll() {
@@ -54,11 +53,13 @@ export class ReportsService {
 
   async generateReport(dto: GenerateReportDto) {
     const start = new Date(dto.startDate);
+    start.setHours(0, 0, 0, 0);
+
     const end = new Date(dto.endDate);
     end.setHours(23, 59, 59, 999);
 
     // ==========================================
-    // 1. ВЫБОРКА ОСНОВНЫХ ДАННЫХ И СОЗДАНИЕ КНИГИ
+    // 1. ВЫБОРКА ДАННЫХ
     // ==========================================
     const requests = await this.requestRepository.find({
       where: {
@@ -68,348 +69,702 @@ export class ReportsService {
       relations: ['patient', 'feedback', 'feedback.evidenceMessages'],
     });
 
+    const errorsLog = await this.errorLogRepository.find({
+      where: { arrivalDate: Between(start, end) },
+      order: { createdAt: 'DESC' },
+    });
+
     const workbook = new ExcelJS.Workbook();
-    
-    // --- ВКЛАДКА 1: ОСНОВНОЙ ОТЧЕТ ---
+
+    // ==========================================
+    // 2. ВКЛАДКА 1: ОСНОВНОЙ ОТЧЕТ
+    // ==========================================
     const worksheet = workbook.addWorksheet('Асосий хисобот (Отчет)');
 
     const dateRangeStr = `с ${format(start, 'dd.MM.yyyy')} по ${format(end, 'dd.MM.yyyy')}`;
     const titleText = `ОРЗУ МЕДИКАЛ клиникаларининг ${dateRangeStr} ётган беморларнинг кайта алокага олинганлар буйича курсаткичлари тугрисида`;
 
-    worksheet.mergeCells('A1:BL1');
+    worksheet.mergeCells('A1:BQ1');
     const titleRow = worksheet.getCell('A1');
     titleRow.value = titleText.toUpperCase();
     titleRow.font = { name: 'Times New Roman', size: 12, bold: true };
-    titleRow.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    titleRow.alignment = {
+      vertical: 'middle',
+      horizontal: 'center',
+      wrapText: true,
+    };
     worksheet.getRow(1).height = 40;
 
-    worksheet.mergeCells('A2:BL2');
+    worksheet.mergeCells('A2:BQ2');
     const subTitleRow = worksheet.getCell('A2');
     subTitleRow.value = 'М А Ъ Л У М О Т Н О М А';
     subTitleRow.font = { name: 'Times New Roman', size: 14, bold: true };
     subTitleRow.alignment = { vertical: 'middle', horizontal: 'center' };
 
-    worksheet.addRow([]);
+    const row3 = worksheet.addRow([]);
+    const row4 = worksheet.addRow([]);
+    row3.height = 30;
+    row4.height = 80;
 
-    const baseHeadersRow1 = [
-      'Т/Р', 'Клиникалар', 'Келган Беморлар (жами)', 'Кайта алокага олинганлар (Дозвон)', '%',
-      'телефон кутармади', 'нотугри номер', 'учирилган номер', 'WhatsApp йук', 'Алокага чикилмаган (жами)', '%',
-      'Шикоятлар', 'Таклифлар', 'Клиникага тегишли эмас'
+    const fillStyle = (color: string) =>
+      ({
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: color },
+      }) as ExcelJS.Fill;
+    const borderStyle = {
+      top: { style: 'thin' },
+      left: { style: 'thin' },
+      bottom: { style: 'thin' },
+      right: { style: 'thin' },
+    } as Partial<ExcelJS.Borders>;
+    const alignCenter = {
+      horizontal: 'center',
+      vertical: 'middle',
+      wrapText: true,
+    } as Partial<ExcelJS.Alignment>;
+    const alignRotate = {
+      horizontal: 'center',
+      vertical: 'middle',
+      wrapText: true,
+      textRotation: 90,
+    } as Partial<ExcelJS.Alignment>;
+
+    const setupHeader = (
+      colSpanStart: number,
+      colSpanEnd: number,
+      topLabel: string,
+      subLabels: string[],
+      color: string,
+      rotateSub: boolean = false,
+    ) => {
+      if (colSpanStart === colSpanEnd) {
+        worksheet.mergeCells(3, colSpanStart, 4, colSpanStart);
+        const cell = row3.getCell(colSpanStart);
+        cell.value = topLabel;
+        cell.fill = fillStyle(color);
+        cell.border = borderStyle;
+        cell.alignment = alignCenter;
+        cell.font = { bold: true };
+        row4.getCell(colSpanStart).border = borderStyle;
+      } else {
+        worksheet.mergeCells(3, colSpanStart, 3, colSpanEnd);
+        const topCell = row3.getCell(colSpanStart);
+        topCell.value = topLabel;
+        topCell.fill = fillStyle(color);
+        topCell.border = borderStyle;
+        topCell.alignment = alignCenter;
+        topCell.font = { bold: true };
+
+        subLabels.forEach((label, i) => {
+          const cell = row4.getCell(colSpanStart + i);
+          cell.value = label;
+          cell.fill = fillStyle(color);
+          cell.border = borderStyle;
+          cell.alignment = rotateSub ? alignRotate : alignCenter;
+          cell.font = { bold: true };
+        });
+      }
+    };
+
+    const C_GRAY = 'FFE7E6E6';
+    const C_RED = 'FFF8CBAD';
+    const C_GREEN = 'FFC6E0B4';
+    const C_BLUE = 'FFB4C6E7';
+    const C_YELLOW = 'FFFFE699';
+    const C_ORANGE = 'FFF4B084';
+    const C_CYAN = 'FFA9D08E';
+    const C_PURPLE = 'FFD9E1F2';
+    const C_GOLD = 'FFFFD966';
+    const C_PINK = 'FFF4CCCC';
+
+    setupHeader(1, 1, '№', [], C_GRAY);
+    setupHeader(2, 2, 'филиал', [], C_GRAY);
+    setupHeader(3, 3, 'кол пациентов за мес', [], C_GRAY);
+    setupHeader(4, 4, 'кол. переданных номеров', [], C_GRAY);
+    setupHeader(5, 5, '%', [], C_GRAY);
+    setupHeader(
+      6,
+      10,
+      'не корректно',
+      ['не правильный номер', 'номер сотрудников', 'нет ватсапа', 'всего', '%'],
+      C_RED,
+      true,
+    );
+    setupHeader(
+      11,
+      16,
+      'корректно',
+      ['обзвон', '%', 'не ответили', 'номер отключен', 'Всего', '%'],
+      C_GREEN,
+      true,
+    );
+
+    const catConfigs = [
+      { name: 'ВРАЧИ', color: C_BLUE },
+      { name: 'МЕДСЕСТРЫ', color: C_YELLOW },
+      { name: 'ЧИСТОТА', color: C_ORANGE },
+      { name: 'КУХНЯ', color: C_CYAN },
+      { name: 'ОБЩИЕ ВОПРОСЫ ПО КЛИНИКЕ', color: C_PURPLE },
+      { name: 'ВСЕГО', color: C_GOLD },
     ];
 
-    const ratingHeadersCount: string[] = [];
-    const ratingHeadersPct: string[] = [];
-    CATEGORIES.forEach((cat) => {
-      SCORES.forEach((s) => {
-        ratingHeadersCount.push(`${cat.label} (${s})`);
-        ratingHeadersPct.push(`${cat.label} (${s} %)`);
-      });
+    let colIdx = 17;
+    CATEGORIES.forEach((cat, index) => {
+      const subLabels = SCORES.map((s) => [`${cat.prefix} ${s}`, '%']).flat();
+      setupHeader(
+        colIdx,
+        colIdx + 7,
+        catConfigs[index].name,
+        subLabels,
+        catConfigs[index].color,
+        true,
+      );
+      colIdx += 8;
     });
 
-    const linkHeaders = ['Шикоят файллари / Trello', 'Таклиф файллари / Trello'];
-    const fullHeaders = [...baseHeadersRow1, ...ratingHeadersCount, ...ratingHeadersPct, ...linkHeaders];
+    const totalSubLabels = SCORES.map((s) => [`всего ${s}`, '%']).flat();
+    setupHeader(
+      colIdx,
+      colIdx + 7,
+      catConfigs[5].name,
+      totalSubLabels,
+      catConfigs[5].color,
+      true,
+    );
 
-    const headerRow = worksheet.addRow(fullHeaders);
-    headerRow.font = { bold: true };
-    headerRow.eachCell((cell) => {
-      cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
-      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true, textRotation: 90 };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'D9D9D9' } };
-    });
-    for(let i=1; i<=14; i++) {
-        headerRow.getCell(i).alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-    }
-    worksheet.getRow(4).height = 120;
+    // ИСПРАВЛЕНИЕ ЗАГОЛОВКА ДЛЯ ДРУГИХ ЖАЛОБ
+    setupHeader(
+      65,
+      69,
+      'жалобы',
+      [
+        'кол жалоб',
+        '%',
+        'предложение',
+        'жалобы каторые не относиться к клинике',
+        'ссылка',
+      ],
+      C_PINK,
+      true,
+    );
 
-    const branchList = [...new Set(requests.map((r) => r.branch).filter(Boolean))];
+    const reqBranches = requests.map((r) => r.branch).filter(Boolean);
+    const errBranches = errorsLog.map((e) => e.branch).filter(Boolean);
+    const branchList = [...new Set([...reqBranches, ...errBranches])];
+
     const totals = {
-      processed: 0, success: 0, noAnswer: 0, unreachable: 0, wrongNum: 0, noWa: 0,
-      feedNeg: 0, feedPos: 0, feedNotRel: 0,
+      handedOver: 0,
+      wrongNum: 0,
+      noWa: 0,
+      incorrectTotal: 0,
+      obzvon: 0,
+      noAnswer: 0,
+      unreachable: 0,
+      correctTotal: 0,
+      feedNeg: 0,
+      feedPos: 0,
+      feedNotRel: 0,
       ratingsCount: {} as Record<string, number>,
+      allRatingsCount: {} as Record<number, number>,
     };
 
     branchList.forEach((branch, index) => {
-      const bRequests = requests.filter((r) => r.branch === branch);
-      const bTotal = bRequests.length;
+      const bReqs = requests.filter((r) => r.branch === branch);
+      const bErrors = errorsLog.filter((e) => e.branch === branch);
 
-      const bNoAnswer = bRequests.filter((r) => r.status === RequestStatus.NO_ANSWER).length;
-      const bUnreachable = bRequests.filter((r) => r.status === RequestStatus.UNREACHABLE).length;
-      const bWrongNum = bRequests.filter((r) => r.status === RequestStatus.WRONG_NUMBER).length;
-      const bNoWa = bRequests.filter((r) => r.status === RequestStatus.HAS_NOT_WHATSAPP).length;
-      const bFailTotal = bNoAnswer + bUnreachable + bWrongNum + bNoWa;
-      const bSuccess = bTotal - bFailTotal;
+      const bHandedOver = bReqs.length + bErrors.length;
 
-      const bFeedNeg = bRequests.filter((r) => r.status === RequestStatus.FEEDBACK_NEGATIVE).length;
-      const bFeedPos = bRequests.filter((r) => r.status === RequestStatus.FEEDBACK_POSITIVE).length;
-      const bFeedNotRel = bRequests.filter((r) => r.status === RequestStatus.FEEDBACK_NOT_RELATED).length;
+      const bWrongNumberStatus = bReqs.filter(
+        (r) => r.status === RequestStatus.WRONG_NUMBER,
+      ).length;
+      const bWrongNumTotal = bErrors.length + bWrongNumberStatus;
+
+      const bEmpNum = null;
+
+      const bNoWa = bReqs.filter(
+        (r) => r.status === RequestStatus.HAS_NOT_WHATSAPP,
+      ).length;
+
+      const bIncorrectTotal = bWrongNumTotal + (bEmpNum || 0) + bNoWa;
+
+      const successRequests = bReqs.filter((r) =>
+        [
+          RequestStatus.ALL_OK,
+          RequestStatus.FEEDBACK_POSITIVE,
+          RequestStatus.FEEDBACK_NEGATIVE,
+          RequestStatus.FEEDBACK_NOT_RELATED,
+        ].includes(r.status),
+      );
+      const bObzvon = successRequests.length;
+
+      const bNoAnswer = bReqs.filter(
+        (r) => r.status === RequestStatus.NO_ANSWER,
+      ).length;
+      const bUnreachable = bReqs.filter(
+        (r) => r.status === RequestStatus.UNREACHABLE,
+      ).length;
+
+      const bCorrectTotal = bObzvon + bNoAnswer + bUnreachable;
+
+      const bFeedNeg = bReqs.filter(
+        (r) => r.status === RequestStatus.FEEDBACK_NEGATIVE,
+      ).length;
+      const bFeedPos = bReqs.filter(
+        (r) => r.status === RequestStatus.FEEDBACK_POSITIVE,
+      ).length;
+      const bFeedNotRel = bReqs.filter(
+        (r) => r.status === RequestStatus.FEEDBACK_NOT_RELATED,
+      ).length;
 
       const branchRatings: Record<string, number> = {};
-      const linksNeg: {text: string, url: string}[] = [];
-      const linksOther: {text: string, url: string}[] = [];
+      const branchTotalScores: Record<number, number> = {
+        5: 0,
+        4: 0,
+        3: 0,
+        2: 0,
+      };
 
-      const successRequests = bRequests.filter((r) => 
-        [RequestStatus.ALL_OK, RequestStatus.FEEDBACK_POSITIVE, RequestStatus.FEEDBACK_NEGATIVE, RequestStatus.FEEDBACK_NOT_RELATED].includes(r.status)
-      );
-
+      // ИСПРАВЛЕНИЕ ПОДСЧЕТА 'ВСЕГО'
       successRequests.forEach((req) => {
-        // Оценки
+        let reqTotalScore = 0; // Сумма всех оценок для 1 пациента
+
         CATEGORIES.forEach((cat) => {
           let score = 5;
           if (req.status === RequestStatus.FEEDBACK_NEGATIVE) {
-             score = req.feedback?.ratings?.[cat.id] || 5;
+            score = req.feedback?.ratings?.[cat.id] || 5;
           }
           if (!SCORES.includes(score)) score = 5;
+
           const key = `${cat.id}-${score}`;
           branchRatings[key] = (branchRatings[key] || 0) + 1;
           totals.ratingsCount[key] = (totals.ratingsCount[key] || 0) + 1;
+
+          reqTotalScore += score;
         });
 
-        // 🔥 ДОБАВЛЕНИЕ TRELLO И ФАЙЛОВ В ОТЧЕТ 🔥
-        if (req.status === RequestStatus.FEEDBACK_NEGATIVE) {
-            if (req.feedback?.trelloUrl) {
-                linksNeg.push({ text: 'Trello (Шикоят)', url: req.feedback.trelloUrl });
-            }
-            if (req.feedback?.evidenceMessages?.length > 0) {
-                req.feedback.evidenceMessages.forEach((e, i) => {
-                    if (e.mediaUrl) linksNeg.push({ text: `Файл-${i + 1}`, url: e.mediaUrl });
-                });
-            }
-        } else if ([RequestStatus.FEEDBACK_POSITIVE, RequestStatus.FEEDBACK_NOT_RELATED].includes(req.status)) {
-            if (req.feedback?.trelloUrl) {
-                linksOther.push({ text: 'Trello (Таклиф)', url: req.feedback.trelloUrl });
-            }
-            if (req.feedback?.evidenceMessages?.length > 0) {
-                req.feedback.evidenceMessages.forEach((e, i) => {
-                    if (e.mediaUrl) linksOther.push({ text: `Файл-${i + 1}`, url: e.mediaUrl });
-                });
-            }
-        }
+        // Высчитываем среднюю общую оценку пациента
+        let overallScore = Math.round(reqTotalScore / CATEGORIES.length);
+        if (!SCORES.includes(overallScore)) overallScore = 5;
+
+        // Прибавляем строго +1 за одного пациента в ИТОГО
+        branchTotalScores[overallScore] += 1;
+        totals.allRatingsCount[overallScore] =
+          (totals.allRatingsCount[overallScore] || 0) + 1;
       });
 
-      const maxRows = Math.max(linksNeg.length, linksOther.length, 1);
-      // @ts-ignore
-      const startRowNumber = worksheet.lastRow.number + 1;
+      const rowValues = Array(70).fill(null);
+      rowValues[1] = index + 1;
+      rowValues[2] = branch;
+      rowValues[3] = null;
+      rowValues[4] = bHandedOver;
+      rowValues[5] = null;
 
-      for (let i = 0; i < maxRows; i++) {
-        const rowValues = Array(fullHeaders.length + 1).fill(null);
-        
-        if (i === 0) {
-          rowValues[1] = index + 1; rowValues[2] = branch; rowValues[3] = bTotal;
-          rowValues[4] = bSuccess; rowValues[5] = bTotal ? bSuccess / bTotal : 0;
-          rowValues[6] = bNoAnswer; rowValues[7] = bWrongNum; rowValues[8] = bUnreachable; rowValues[9] = bNoWa;
-          rowValues[10] = bFailTotal; rowValues[11] = bTotal ? bFailTotal / bTotal : 0;
-          rowValues[12] = bFeedNeg; rowValues[13] = bFeedPos; rowValues[14] = bFeedNotRel;
+      rowValues[6] = bWrongNumTotal;
+      rowValues[7] = bEmpNum;
+      rowValues[8] = bNoWa;
+      rowValues[9] = bIncorrectTotal;
+      rowValues[10] = bHandedOver ? bIncorrectTotal / bHandedOver : 0;
 
-          let colIndex = 15;
-          CATEGORIES.forEach(cat => SCORES.forEach(s => { rowValues[colIndex++] = branchRatings[`${cat.id}-${s}`] || 0; }));
-          CATEGORIES.forEach(cat => SCORES.forEach(s => {
-              const count = branchRatings[`${cat.id}-${s}`] || 0;
-              rowValues[colIndex++] = bSuccess > 0 ? count / bSuccess : 0;
-          }));
-        }
+      rowValues[11] = bObzvon;
+      rowValues[12] = bHandedOver ? bObzvon / bHandedOver : 0;
+      rowValues[13] = bNoAnswer;
+      rowValues[14] = bUnreachable;
+      rowValues[15] = bCorrectTotal;
+      rowValues[16] = bHandedOver ? bCorrectTotal / bHandedOver : 0;
 
-        const linkColStart = 15 + 48; // Индекс начала колонок со ссылками
-        if (linksNeg[i]) rowValues[linkColStart] = { text: linksNeg[i].text, hyperlink: linksNeg[i].url };
-        if (linksOther[i]) rowValues[linkColStart + 1] = { text: linksOther[i].text, hyperlink: linksOther[i].url };
-
-        const row = worksheet.addRow(rowValues.slice(1));
-        
-        if (i === 0) {
-            row.getCell(5).numFmt = '0.0%'; row.getCell(11).numFmt = '0.0%';
-            for(let c = 15 + 24; c < 15 + 48; c++) row.getCell(c).numFmt = '0.0%';
-        }
-
-        row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
-          cell.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
-          cell.alignment = { horizontal: 'center', vertical: 'middle' };
-          if (colNumber >= linkColStart - 1 && cell.value) cell.font = { color: { argb: '0000FF' }, underline: true };
-          if (cell.value === 0 || cell.value === '0 (0.0%)') cell.value = '';
+      let cIdx = 17;
+      CATEGORIES.forEach((cat) => {
+        SCORES.forEach((s) => {
+          const count = branchRatings[`${cat.id}-${s}`] || 0;
+          rowValues[cIdx++] = count;
+          rowValues[cIdx++] = bObzvon > 0 ? count / bObzvon : 0;
         });
+      });
+      SCORES.forEach((s) => {
+        const count = branchTotalScores[s] || 0;
+        rowValues[cIdx++] = count;
+        rowValues[cIdx++] = bObzvon > 0 ? count / bObzvon : 0;
+      });
+
+      rowValues[65] = bFeedNeg;
+      rowValues[66] = bObzvon ? bFeedNeg / bObzvon : 0;
+      rowValues[67] = bFeedPos;
+      rowValues[68] = bFeedNotRel;
+      rowValues[69] = 'Вкладка "Ссылки"';
+
+      const row = worksheet.addRow(rowValues.slice(1));
+
+      [10, 12, 16, 66].forEach((c) => {
+        row.getCell(c).numFmt = '0.0%';
+      });
+
+      let pIdx = 17;
+      for (let i = 0; i < 24; i++) {
+        pIdx++;
+        row.getCell(pIdx++).numFmt = '0.0%';
       }
 
-      if (maxRows > 1) {
-        for (let col = 1; col <= fullHeaders.length - 2; col++) {
-          worksheet.mergeCells(startRowNumber, col, startRowNumber + maxRows - 1, col);
+      row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+        cell.border = borderStyle;
+        cell.alignment = alignCenter;
+        if (colNumber === 69) {
+          cell.font = {
+            color: { argb: '0000FF' },
+            underline: true,
+            italic: true,
+          };
         }
-      }
-
-      totals.processed += bTotal; totals.success += bSuccess;
-      totals.noAnswer += bNoAnswer; totals.unreachable += bUnreachable;
-      totals.wrongNum += bWrongNum; totals.noWa += bNoWa;
-      totals.feedNeg += bFeedNeg; totals.feedPos += bFeedPos; totals.feedNotRel += bFeedNotRel;
-    });
-
-    // --- ИТОГИ ОСНОВНОГО ОТЧЕТА ---
-    const gPctContacted = totals.processed > 0 ? totals.success / totals.processed : 0;
-    const gFailTotal = totals.noAnswer + totals.wrongNum + totals.unreachable + totals.noWa;
-    const gPctNotContacted = totals.processed > 0 ? gFailTotal / totals.processed : 0;
-
-    const totalRowValues = [
-        'ИТОГО', '', totals.processed, totals.success, gPctContacted,
-        totals.noAnswer, totals.wrongNum, totals.unreachable, totals.noWa, gFailTotal, gPctNotContacted,
-        totals.feedNeg, totals.feedPos, totals.feedNotRel
-    ];
-
-    CATEGORIES.forEach(cat => SCORES.forEach(s => { totalRowValues.push(totals.ratingsCount[`${cat.id}-${s}`] || 0); }));
-    CATEGORIES.forEach(cat => SCORES.forEach(s => {
-        const count = totals.ratingsCount[`${cat.id}-${s}`] || 0;
-        totalRowValues.push(totals.success > 0 ? count / totals.success : 0);
-    }));
-
-    const totalRow = worksheet.addRow(totalRowValues);
-    worksheet.mergeCells(`A${totalRow.number}:B${totalRow.number}`);
-    
-    totalRow.getCell(5).numFmt = '0.0%'; totalRow.getCell(11).numFmt = '0.0%';
-    for(let c = 15 + 24; c < 15 + 48; c++) totalRow.getCell(c).numFmt = '0.0%';
-
-    totalRow.font = { bold: true };
-    totalRow.eachCell((cell) => {
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'BFBFBF' } };
-        cell.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
-        cell.alignment = { horizontal: 'center', vertical: 'middle' };
         if (cell.value === 0 || cell.value === '0 (0.0%)') cell.value = '';
+      });
+
+      totals.handedOver += bHandedOver;
+      totals.incorrectTotal += bIncorrectTotal;
+      totals.wrongNum += bWrongNumTotal;
+      totals.noWa += bNoWa;
+      totals.obzvon += bObzvon;
+      totals.noAnswer += bNoAnswer;
+      totals.unreachable += bUnreachable;
+      totals.correctTotal += bCorrectTotal;
+      totals.feedNeg += bFeedNeg;
+      totals.feedPos += bFeedPos;
+      totals.feedNotRel += bFeedNotRel;
     });
 
-    worksheet.columns.forEach((col, i) => { 
-        if (i === 1) col.width = 20; 
-        else if (i >= fullHeaders.length - 2) col.width = 25; 
-        else col.width = 8; 
+    // ИТОГО
+    const totalRowValues = Array(70).fill(null);
+    totalRowValues[1] = 'ИТОГО';
+    totalRowValues[3] = null;
+    totalRowValues[4] = totals.handedOver;
+    totalRowValues[5] = null;
+
+    totalRowValues[6] = totals.wrongNum;
+    totalRowValues[7] = null;
+    totalRowValues[8] = totals.noWa;
+    totalRowValues[9] = totals.incorrectTotal;
+    totalRowValues[10] = totals.handedOver
+      ? totals.incorrectTotal / totals.handedOver
+      : 0;
+
+    totalRowValues[11] = totals.obzvon;
+    totalRowValues[12] = totals.handedOver
+      ? totals.obzvon / totals.handedOver
+      : 0;
+    totalRowValues[13] = totals.noAnswer;
+    totalRowValues[14] = totals.unreachable;
+    totalRowValues[15] = totals.correctTotal;
+    totalRowValues[16] = totals.handedOver
+      ? totals.correctTotal / totals.handedOver
+      : 0;
+
+    let totalCIdx = 17;
+    CATEGORIES.forEach((cat) => {
+      SCORES.forEach((s) => {
+        const count = totals.ratingsCount[`${cat.id}-${s}`] || 0;
+        totalRowValues[totalCIdx++] = count;
+        totalRowValues[totalCIdx++] =
+          totals.obzvon > 0 ? count / totals.obzvon : 0;
+      });
+    });
+    SCORES.forEach((s) => {
+      const count = totals.allRatingsCount[s] || 0;
+      totalRowValues[totalCIdx++] = count;
+      totalRowValues[totalCIdx++] =
+        totals.obzvon > 0 ? count / totals.obzvon : 0;
     });
 
+    totalRowValues[65] = totals.feedNeg;
+    totalRowValues[66] = totals.obzvon ? totals.feedNeg / totals.obzvon : 0;
+    totalRowValues[67] = totals.feedPos;
+    totalRowValues[68] = totals.feedNotRel;
+
+    const totalRow = worksheet.addRow(totalRowValues.slice(1));
+    worksheet.mergeCells(`A${totalRow.number}:C${totalRow.number}`);
+    totalRow.font = { bold: true };
+
+    totalRow.eachCell({ includeEmpty: true }, (cell) => {
+      cell.fill = fillStyle(C_GRAY);
+      cell.border = borderStyle;
+      cell.alignment = alignCenter;
+      if (cell.value === 0 || cell.value === '0 (0.0%)') cell.value = '';
+    });
+
+    [10, 12, 16, 66].forEach((c) => {
+      totalRow.getCell(c).numFmt = '0.0%';
+    });
+
+    totalCIdx = 17;
+    for (let i = 0; i < 24; i++) {
+      totalCIdx++;
+      totalRow.getCell(totalCIdx++).numFmt = '0.0%';
+    }
+
+    worksheet.columns.forEach((col, i) => {
+      if (i === 1) col.width = 20;
+      else if (i === 68) col.width = 18;
+      else col.width = 7.5;
+    });
 
     // ==========================================
-    // 2. ВКЛАДКА 2: ОБЗОР И ДЕТАЛИЗАЦИЯ ОШИБОК ИМПОРТА
+    // 3. ВКЛАДКА 2: ССЫЛКИ И МЕДИА
+    // ==========================================
+    const linksSheet = workbook.addWorksheet('Хаволалар (Ссылки)');
+    linksSheet.addRow([
+      'ДЕТАЛИЗАЦИЯ ЖАЛОБ И ПРЕДЛОЖЕНИЙ (ССЫЛКИ TRELLO И ФАЙЛЫ)',
+    ]);
+    linksSheet.mergeCells('A1:G1');
+    linksSheet.getCell('A1').font = { bold: true, size: 12 };
+    linksSheet.getCell('A1').alignment = {
+      horizontal: 'center',
+      vertical: 'middle',
+    };
+    linksSheet.getRow(1).height = 30;
+
+    const linkHeaders = [
+      '№',
+      'Филиал',
+      'Бемор (Пациент)',
+      'Телефон',
+      'Тип',
+      'Trello URL',
+      'Файлы (Медиа)',
+    ];
+    const lRow = linksSheet.addRow(linkHeaders);
+    lRow.eachCell((c) => {
+      c.fill = fillStyle(C_GRAY);
+      c.font = { bold: true };
+      c.border = borderStyle;
+      c.alignment = alignCenter;
+    });
+
+    let linkIndex = 1;
+    branchList.forEach((branch) => {
+      const bReqs = requests.filter(
+        (r) =>
+          r.branch === branch &&
+          [
+            RequestStatus.FEEDBACK_NEGATIVE,
+            RequestStatus.FEEDBACK_POSITIVE,
+            RequestStatus.FEEDBACK_NOT_RELATED,
+          ].includes(r.status),
+      );
+      const itemsToPrint = bReqs.filter(
+        (r) =>
+          r.feedback?.trelloUrl ||
+          (r.feedback?.evidenceMessages &&
+            r.feedback.evidenceMessages.length > 0),
+      );
+
+      if (itemsToPrint.length === 0) return;
+
+      // @ts-ignore
+      const startRow = linksSheet.lastRow.number + 1;
+      itemsToPrint.forEach((req) => {
+        let typeStr = 'Жалоба (Шикоят)';
+        if (req.status === RequestStatus.FEEDBACK_POSITIVE)
+          typeStr = 'Предложение (Таклиф)';
+        else if (req.status === RequestStatus.FEEDBACK_NOT_RELATED)
+          typeStr = 'Другое (Клиникага тегишли эмас)';
+
+        const trelloCell = req.feedback?.trelloUrl
+          ? { text: 'Перейти в Trello', hyperlink: req.feedback.trelloUrl }
+          : '-';
+        let mediaCell: any = '-';
+
+        if (req.feedback?.evidenceMessages?.length > 0) {
+          const mediaLinks = req.feedback.evidenceMessages
+            .map((e) => e.mediaUrl)
+            .filter(Boolean);
+          if (mediaLinks.length === 1) {
+            mediaCell = { text: 'Открыть файл', hyperlink: mediaLinks[0] };
+          } else if (mediaLinks.length > 1) {
+            mediaCell = {
+              text: `Файлов: ${mediaLinks.length} (Нажмите для открытия 1-го)`,
+              hyperlink: mediaLinks[0],
+            };
+          }
+        }
+
+        const row = linksSheet.addRow([
+          linkIndex++,
+          branch,
+          req.patient?.name || '-',
+          req.patient?.phone || '-',
+          typeStr,
+          trelloCell,
+          mediaCell,
+        ]);
+
+        row.eachCell({ includeEmpty: true }, (c, colNum) => {
+          c.border = borderStyle;
+          c.alignment = alignCenter;
+          if ((colNum === 6 || colNum === 7) && c.value !== '-')
+            c.font = { color: { argb: '0000FF' }, underline: true };
+        });
+      });
+
+      // @ts-ignore
+      const endRow = linksSheet.lastRow.number;
+      if (endRow > startRow) {
+        linksSheet.mergeCells(startRow, 2, endRow, 2);
+      }
+    });
+
+    linksSheet.columns.forEach((c, i) => {
+      if (i === 0) c.width = 6;
+      else if (i === 1) c.width = 20;
+      else if (i === 2) c.width = 30;
+      else if (i === 3) c.width = 20;
+      else if (i === 4) c.width = 25;
+      else c.width = 25;
+    });
+
+    // ==========================================
+    // 4. ВКЛАДКА 3: ОШИБКИ ИМПОРТА
     // ==========================================
     const errorSheet = workbook.addWorksheet('Импорт хатоликлари (Ошибки)');
-    
-    // 🔥 ИСПРАВЛЕНИЕ: Ищем по arrivalDate, а не по createdAt! 🔥
-    const errorsLog = await this.errorLogRepository.find({
-      where: { arrivalDate: Between(start, end) }, 
-      order: { createdAt: 'DESC' }
-    });
-
     const totalErrors = errorsLog.length;
 
-    errorSheet.addRow(['ИМПОРТ ҚИЛИШДАГИ ХАТОЛИКЛАР СТАТИСТИКАСИ (Статистика ошибок)']);
+    errorSheet.addRow(['ИМПОРТ ҚИЛИШДАГИ ХАТОЛИКЛАР СТАТИСТИКАСИ']);
     errorSheet.mergeCells('A1:C1');
     errorSheet.getCell('A1').font = { bold: true, size: 12 };
     errorSheet.getCell('A1').alignment = { horizontal: 'center' };
 
-    errorSheet.addRow(['Хатолик тури (Категория)', 'Сони (Кол-во)', 'Улуши (%)']);
+    errorSheet.addRow([
+      'Хатолик тури (Категория)',
+      'Сони (Кол-во)',
+      'Улуши (%)',
+    ]);
     // @ts-ignore
     errorSheet.lastRow.font = { bold: true };
     // @ts-ignore
-    errorSheet.lastRow.eachCell(c => {
-       c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'D9D9D9' } };
-       c.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
+    errorSheet.lastRow.eachCell((c) => {
+      c.fill = fillStyle(C_GRAY);
+      c.border = borderStyle;
     });
 
     const categoryCounts: Record<string, number> = {};
-    errorsLog.forEach(e => {
-       categoryCounts[e.category] = (categoryCounts[e.category] || 0) + 1;
+    errorsLog.forEach((e) => {
+      categoryCounts[e.category] = (categoryCounts[e.category] || 0) + 1;
     });
 
-    Object.keys(ERROR_CATEGORIES_MAPPING).forEach(cat => {
-       const count = categoryCounts[cat] || 0;
-       const pct = totalErrors > 0 ? (count / totalErrors) : 0;
-       
-       const row = errorSheet.addRow([ERROR_CATEGORIES_MAPPING[cat], count, pct]);
-       row.getCell(3).numFmt = '0.0%';
-       row.eachCell(c => c.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} });
+    Object.keys(ERROR_CATEGORIES_MAPPING).forEach((cat) => {
+      const count = categoryCounts[cat] || 0;
+      const row = errorSheet.addRow([
+        ERROR_CATEGORIES_MAPPING[cat as keyof typeof ERROR_CATEGORIES_MAPPING],
+        count,
+        totalErrors ? count / totalErrors : 0,
+      ]);
+      row.getCell(3).numFmt = '0.0%';
+      row.eachCell((c) => (c.border = borderStyle));
     });
 
     const errTotalRow = errorSheet.addRow(['ЖАМИ (ИТОГО)', totalErrors, 1]);
     errTotalRow.font = { bold: true };
     errTotalRow.getCell(3).numFmt = '0.0%';
-    errTotalRow.eachCell(c => c.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} });
+    errTotalRow.eachCell((c) => (c.border = borderStyle));
 
-    errorSheet.addRow([]); // Отступ
+    errorSheet.addRow([]);
 
     errorSheet.addRow(['ХАТОЛИКЛАР ТАФСИЛОТИ (Детализация ошибок)']);
-    // @ts-ignore
-    errorSheet.mergeCells(`A${errorSheet.lastRow.number}:H${errorSheet.lastRow.number}`);
+    errorSheet.mergeCells(
+      // @ts-ignore
+      `A${errorSheet.lastRow.number}:H${errorSheet.lastRow.number}`,
+    );
     // @ts-ignore
     errorSheet.lastRow.font = { bold: true, size: 12 };
     // @ts-ignore
     errorSheet.lastRow.alignment = { horizontal: 'center' };
 
-    const detailHeaders = ['№', 'Келган сана (arrivalDate)', 'Юкланган сана (Импорт)', 'Қатор (Excel)', 'Ф.И.Ш (Имя)', 'Телефон', 'Филиал', 'Изох (Ошибка)'];
-    const detRow = errorSheet.addRow(detailHeaders);
+    const detRow = errorSheet.addRow([
+      '№',
+      'Келган сана',
+      'Юкланган сана',
+      'Қатор (Excel)',
+      'Ф.И.Ш (Имя)',
+      'Телефон',
+      'Филиал',
+      'Изох (Ошибка)',
+    ]);
     detRow.font = { bold: true };
-    detRow.eachCell(c => {
-       c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'D9D9D9' } };
-       c.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
-       c.alignment = { horizontal: 'center', vertical: 'middle' };
+    detRow.eachCell((c) => {
+      c.fill = fillStyle(C_GRAY);
+      c.border = borderStyle;
+      c.alignment = alignCenter;
     });
 
     errorsLog.forEach((e, i) => {
-       const mappedCategory = ERROR_CATEGORIES_MAPPING[e.category] || e.category;
-       const errorText = `[${mappedCategory}] - ${e.errorMessages.join('; ')}`;
-
-       const row = errorSheet.addRow([
-          i + 1,
-          format(e.arrivalDate, 'dd.MM.yyyy'),
-          format(e.createdAt, 'dd.MM.yyyy HH:mm'),
-          e.lineNumber,
-          e.name || '-',
-          e.phone || '-',
-          e.branch || '-',
-          errorText
-       ]);
-       
-       row.eachCell(c => c.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} });
+      const mappedCategory =
+        ERROR_CATEGORIES_MAPPING[
+          e.category as keyof typeof ERROR_CATEGORIES_MAPPING
+        ] || e.category;
+      const row = errorSheet.addRow([
+        i + 1,
+        format(e.arrivalDate, 'dd.MM.yyyy'),
+        format(e.createdAt, 'dd.MM.yyyy HH:mm'),
+        e.lineNumber,
+        e.name || '-',
+        e.phone || '-',
+        e.branch || '-',
+        `[${mappedCategory}] - ${e.errorMessages.join('; ')}`,
+      ]);
+      row.eachCell((c) => (c.border = borderStyle));
     });
 
     errorSheet.columns.forEach((c, i) => {
-       if (i === 0) c.width = 6;
-       else if (i === 1 || i === 2) c.width = 20; 
-       else if (i === 4) c.width = 30; // Имя
-       else if (i === 5) c.width = 20; // Телефон
-       else if (i === 6) c.width = 25; // Филиал
-       else if (i === 7) c.width = 70; // Текст ошибки
-       else c.width = 15;
+      if (i === 0) c.width = 6;
+      else if (i === 1 || i === 2) c.width = 20;
+      else if (i === 4) c.width = 30;
+      else if (i === 5) c.width = 20;
+      else if (i === 6) c.width = 25;
+      else if (i === 7) c.width = 70;
+      else c.width = 15;
     });
 
     // ==========================================
-    // 3. СОХРАНЕНИЕ ФАЙЛА
+    // 5. СОХРАНЕНИЕ ФАЙЛА
     // ==========================================
     const uint8Array = await workbook.xlsx.writeBuffer();
     const buffer = Buffer.from(uint8Array);
-    
+
     const fileName = `Отчет_${format(start, 'dd.MM.yyyy')}-${format(end, 'dd.MM.yyyy')}_${Date.now()}.xlsx`;
     const uploadDir = path.join(process.cwd(), 'uploads', 'reports');
     await fs.mkdir(uploadDir, { recursive: true });
-    
+
     const filePath = path.join(uploadDir, fileName);
     await fs.writeFile(filePath, buffer);
-    
-    const backendUrl = process.env.UPLOAD_URL || process.env.BACKEND_URL || 'http://localhost:3000';
-    const fileUrl = `${backendUrl}/uploads/reports/${fileName}`;
 
-    const report = this.reportRepository.create({
-      name: fileName,
-      fileUrl: fileUrl,
-      startDate: start,
-      endDate: end,
-      status: 'ready', 
-    });
-
-    return this.reportRepository.save(report);
+    const backendUrl =
+      process.env.UPLOAD_URL ||
+      process.env.BACKEND_URL ||
+      'http://localhost:3000';
+    return this.reportRepository.save(
+      this.reportRepository.create({
+        name: fileName,
+        fileUrl: `${backendUrl}/uploads/reports/${fileName}`,
+        startDate: start,
+        endDate: end,
+        status: 'ready',
+      }),
+    );
   }
 
   async remove(id: string) {
-    const report = await this.reportRepository.findOne({ where: { id }});
+    const report = await this.reportRepository.findOne({ where: { id } });
     if (report) {
-       try {
-           const fileName = report.fileUrl.split('/').pop();
-           if (fileName) {
-               const filePath = path.join(process.cwd(), 'uploads', 'reports', fileName);
-               await fs.unlink(filePath);
-           }
-       } catch (e) {
-           this.logger.warn(`Could not delete file for report ${id}: ${e.message}`);
-       }
-       return this.reportRepository.delete(id);
+      try {
+        const fileName = report.fileUrl.split('/').pop();
+        if (fileName) {
+          await fs.unlink(
+            path.join(process.cwd(), 'uploads', 'reports', fileName),
+          );
+        }
+      } catch (e: any) {
+        this.logger.warn(
+          `Could not delete file for report ${id}: ${e.message}`,
+        );
+      }
+      return this.reportRepository.delete(id);
     }
   }
 }
