@@ -17,7 +17,8 @@ const CATEGORIES = [
   { id: 'nurses', prefix: 'медсестры' },
   { id: 'cleanliness', prefix: 'чистота' },
   { id: 'food', prefix: 'кухня' },
-  { id: 'reception', prefix: 'общие вопросы' },
+  { id: 'reception', prefix: 'регистратура' },
+  { id: 'clinic', prefix: 'клиника' },
 ];
 
 const SCORES = [5, 4, 3, 2];
@@ -84,18 +85,14 @@ export class ReportsService {
     const dateRangeStr = `с ${format(start, 'dd.MM.yyyy')} по ${format(end, 'dd.MM.yyyy')}`;
     const titleText = `ОРЗУ МЕДИКАЛ клиникаларининг ${dateRangeStr} ётган беморларнинг кайта алокага олинганлар буйича курсаткичлари тугрисида`;
 
-    worksheet.mergeCells('A1:BQ1');
+    worksheet.mergeCells(1, 1, 1, 78);
     const titleRow = worksheet.getCell('A1');
     titleRow.value = titleText.toUpperCase();
     titleRow.font = { name: 'Times New Roman', size: 12, bold: true };
-    titleRow.alignment = {
-      vertical: 'middle',
-      horizontal: 'center',
-      wrapText: true,
-    };
+    titleRow.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
     worksheet.getRow(1).height = 40;
 
-    worksheet.mergeCells('A2:BQ2');
+    worksheet.mergeCells(2, 1, 2, 78);
     const subTitleRow = worksheet.getCell('A2');
     subTitleRow.value = 'М А Ъ Л У М О Т Н О М А';
     subTitleRow.font = { name: 'Times New Roman', size: 14, bold: true };
@@ -106,38 +103,12 @@ export class ReportsService {
     row3.height = 30;
     row4.height = 80;
 
-    const fillStyle = (color: string) =>
-      ({
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: color },
-      }) as ExcelJS.Fill;
-    const borderStyle = {
-      top: { style: 'thin' },
-      left: { style: 'thin' },
-      bottom: { style: 'thin' },
-      right: { style: 'thin' },
-    } as Partial<ExcelJS.Borders>;
-    const alignCenter = {
-      horizontal: 'center',
-      vertical: 'middle',
-      wrapText: true,
-    } as Partial<ExcelJS.Alignment>;
-    const alignRotate = {
-      horizontal: 'center',
-      vertical: 'middle',
-      wrapText: true,
-      textRotation: 90,
-    } as Partial<ExcelJS.Alignment>;
+    const fillStyle = (color: string) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: color } }) as ExcelJS.Fill;
+    const borderStyle = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } } as Partial<ExcelJS.Borders>;
+    const alignCenter = { horizontal: 'center', vertical: 'middle', wrapText: true } as Partial<ExcelJS.Alignment>;
+    const alignRotate = { horizontal: 'center', vertical: 'middle', wrapText: true, textRotation: 90 } as Partial<ExcelJS.Alignment>;
 
-    const setupHeader = (
-      colSpanStart: number,
-      colSpanEnd: number,
-      topLabel: string,
-      subLabels: string[],
-      color: string,
-      rotateSub: boolean = false,
-    ) => {
+    const setupHeader = (colSpanStart: number, colSpanEnd: number, topLabel: string, subLabels: string[], color: string, rotateSub: boolean = false) => {
       if (colSpanStart === colSpanEnd) {
         worksheet.mergeCells(3, colSpanStart, 4, colSpanStart);
         const cell = row3.getCell(colSpanStart);
@@ -175,6 +146,7 @@ export class ReportsService {
     const C_ORANGE = 'FFF4B084';
     const C_CYAN = 'FFA9D08E';
     const C_PURPLE = 'FFD9E1F2';
+    const C_TEAL = 'FFB4A7D6'; 
     const C_GOLD = 'FFFFD966';
     const C_PINK = 'FFF4CCCC';
 
@@ -183,64 +155,34 @@ export class ReportsService {
     setupHeader(3, 3, 'кол пациентов за мес', [], C_GRAY);
     setupHeader(4, 4, 'кол. переданных номеров', [], C_GRAY);
     setupHeader(5, 5, '%', [], C_GRAY);
-    setupHeader(
-      6,
-      10,
-      'не корректно',
-      ['не правильный номер', 'номер сотрудников', 'нет ватсапа', 'всего', '%'],
-      C_RED,
-      true,
-    );
-    setupHeader(
-      11,
-      16,
-      'корректно',
-      ['обзвон', '%', 'не ответили', 'номер отключен', 'Всего', '%'],
-      C_GREEN,
-      true,
-    );
+    
+    // НЕ КОРРЕКТНО
+    setupHeader(6, 10, 'не корректно', ['не правильный номер', 'номер сотрудников', 'нет ватсапа', 'всего', '%'], C_RED, true);
+    
+    // КОРРЕКТНО
+    setupHeader(11, 17, 'корректно', ['обзвон', '%', 'дубликаты', 'не ответили', 'номер отключен', 'Всего', '%'], C_GREEN, true);
 
     const catConfigs = [
       { name: 'ВРАЧИ', color: C_BLUE },
       { name: 'МЕДСЕСТРЫ', color: C_YELLOW },
       { name: 'ЧИСТОТА', color: C_ORANGE },
       { name: 'КУХНЯ', color: C_CYAN },
-      { name: 'ОБЩИЕ ВОПРОСЫ ПО КЛИНИКЕ', color: C_PURPLE },
+      { name: 'РЕГИСТРАТУРА', color: C_PURPLE },
+      { name: 'КЛИНИКА', color: C_TEAL }, 
       { name: 'ВСЕГО', color: C_GOLD },
     ];
 
-    let colIdx = 17;
+    let colIdx = 18;
     CATEGORIES.forEach((cat, index) => {
       const subLabels = SCORES.map((s) => [`${cat.prefix} ${s}`, '%']).flat();
-      setupHeader(
-        colIdx,
-        colIdx + 7,
-        catConfigs[index].name,
-        subLabels,
-        catConfigs[index].color,
-        true,
-      );
+      setupHeader(colIdx, colIdx + 7, catConfigs[index].name, subLabels, catConfigs[index].color, true);
       colIdx += 8;
     });
 
     const totalSubLabels = SCORES.map((s) => [`всего ${s}`, '%']).flat();
-    setupHeader(
-      colIdx,
-      colIdx + 7,
-      catConfigs[5].name,
-      totalSubLabels,
-      catConfigs[5].color,
-      true,
-    );
+    setupHeader(colIdx, colIdx + 7, catConfigs[6].name, totalSubLabels, catConfigs[6].color, true);
 
-    setupHeader(
-      65,
-      69,
-      'жалобы',
-      ['кол жалоб', '%', 'предложение', 'жалобы каторые не относиться к клинике', 'ссылка'],
-      C_PINK,
-      true,
-    );
+    setupHeader(74, 78, 'жалобы', ['кол жалоб', '%', 'предложение', 'жалобы каторые не относиться к клинике', 'ссылка'], C_PINK, true);
 
     const reqBranches = requests.map((r) => r.branch).filter(Boolean);
     const errBranches = errorsLog.map((e) => e.branch).filter(Boolean);
@@ -249,9 +191,11 @@ export class ReportsService {
     const totals = {
       handedOver: 0,
       wrongNum: 0,
+      empNum: 0,
       noWa: 0,
       incorrectTotal: 0,
       obzvon: 0,
+      duplicates: 0,
       noAnswer: 0,
       unreachable: 0,
       correctTotal: 0,
@@ -259,7 +203,7 @@ export class ReportsService {
       feedPos: 0,
       feedNotRel: 0,
       ratingsCount: {} as Record<string, number>,
-      allRatingsCount: {} as Record<number, number>, // Глобальный счетчик ВСЕГО
+      allRatingsCount: {} as Record<number, number>,
     };
 
     branchList.forEach((branch, index) => {
@@ -268,17 +212,15 @@ export class ReportsService {
 
       const bHandedOver = bReqs.length + bErrors.length;
 
-      const bWrongNumberStatus = bReqs.filter(
-        (r) => r.status === RequestStatus.WRONG_NUMBER,
-      ).length;
-      const bWrongNumTotal = bErrors.length + bWrongNumberStatus;
+      const duplicateErrors = bErrors.filter((e) => e.category === 'DUPLICATE_FILE').length;
+      const otherErrors = bErrors.length - duplicateErrors;
 
+      const bWrongNumberStatus = bReqs.filter((r) => r.status === RequestStatus.WRONG_NUMBER).length;
+      const bWrongNumTotal = bWrongNumberStatus + otherErrors;
       const bEmpNum = null;
+      const bNoWa = bReqs.filter((r) => r.status === RequestStatus.HAS_NOT_WHATSAPP).length;
 
-      const bNoWa = bReqs.filter(
-        (r) => r.status === RequestStatus.HAS_NOT_WHATSAPP,
-      ).length;
-
+      // Всего (Не корректно)
       const bIncorrectTotal = bWrongNumTotal + (bEmpNum || 0) + bNoWa;
 
       const successRequests = bReqs.filter((r) =>
@@ -291,40 +233,43 @@ export class ReportsService {
       );
       const bObzvon = successRequests.length;
 
-      const bNoAnswer = bReqs.filter(
-        (r) => r.status === RequestStatus.NO_ANSWER,
-      ).length;
-      const bUnreachable = bReqs.filter(
-        (r) => r.status === RequestStatus.UNREACHABLE,
-      ).length;
+      const bNoAnswer = bReqs.filter((r) => r.status === RequestStatus.NO_ANSWER).length;
+      const bUnreachable = bReqs.filter((r) => r.status === RequestStatus.UNREACHABLE).length;
+      const bDuplicates = duplicateErrors;
 
-      const bCorrectTotal = bObzvon + bNoAnswer + bUnreachable;
+      // Всего (Корректно)
+      const bCorrectTotal = bObzvon + bDuplicates + bNoAnswer + bUnreachable;
 
-      const bFeedNeg = bReqs.filter(
-        (r) => r.status === RequestStatus.FEEDBACK_NEGATIVE,
-      ).length;
-      const bFeedPos = bReqs.filter(
-        (r) => r.status === RequestStatus.FEEDBACK_POSITIVE,
-      ).length;
-      const bFeedNotRel = bReqs.filter(
-        (r) => r.status === RequestStatus.FEEDBACK_NOT_RELATED,
-      ).length;
+      const bFeedNeg = bReqs.filter((r) => r.status === RequestStatus.FEEDBACK_NEGATIVE).length;
+      const bFeedPos = bReqs.filter((r) => r.status === RequestStatus.FEEDBACK_POSITIVE).length;
+      const bFeedNotRel = bReqs.filter((r) => r.status === RequestStatus.FEEDBACK_NOT_RELATED).length;
 
       const branchRatings: Record<string, number> = {};
       const branchTotalScores: Record<number, number> = { 5: 0, 4: 0, 3: 0, 2: 0 };
 
-      // 🔥 ИСПРАВЛЕНИЕ ЛОГИКИ ОЦЕНОК "ВСЕГО"
+      // Оценки по обзвону
       successRequests.forEach((req) => {
-        let patientOverallScore = 5; // По умолчанию 5
+        let patientOverallScore = 5;
+
+        let ratingsObj = req.feedback?.ratings;
+        if (typeof ratingsObj === 'string') {
+          try { ratingsObj = JSON.parse(ratingsObj); } catch(e) { ratingsObj = {}; }
+        }
 
         CATEGORIES.forEach((cat) => {
           let score = 5;
-          if (req.status === RequestStatus.FEEDBACK_NEGATIVE) {
-            score = req.feedback?.ratings?.[cat.id] || 5;
-          }
-          if (!SCORES.includes(score)) score = 5;
 
-          // Подсчет по конкретной категории
+          // 🔥 ИСПРАВЛЕНИЕ: Если жалоба не относится к клинике, ставим строго 5!
+          if (req.status === RequestStatus.FEEDBACK_NOT_RELATED) {
+            score = 5;
+          } else {
+            let rawScore = ratingsObj?.[cat.id];
+            if (rawScore !== undefined && rawScore !== null) {
+              score = Number(rawScore); 
+            }
+            if (!SCORES.includes(score)) score = 5;
+          }
+
           const key = `${cat.id}-${score}`;
           branchRatings[key] = (branchRatings[key] || 0) + 1;
           totals.ratingsCount[key] = (totals.ratingsCount[key] || 0) + 1;
@@ -340,7 +285,21 @@ export class ReportsService {
         totals.allRatingsCount[patientOverallScore] = (totals.allRatingsCount[patientOverallScore] || 0) + 1;
       });
 
-      const rowValues = Array(70).fill(null);
+      // Дубликаты, Не ответили и Отключен дают рейтинг 5 по всем категориям
+      const extraFivesCount = bDuplicates + bNoAnswer + bUnreachable;
+      
+      if (extraFivesCount > 0) {
+        CATEGORIES.forEach((cat) => {
+          const key = `${cat.id}-5`;
+          branchRatings[key] = (branchRatings[key] || 0) + extraFivesCount;
+          totals.ratingsCount[key] = (totals.ratingsCount[key] || 0) + extraFivesCount;
+        });
+
+        branchTotalScores[5] += extraFivesCount;
+        totals.allRatingsCount[5] = (totals.allRatingsCount[5] || 0) + extraFivesCount;
+      }
+
+      const rowValues = Array(79).fill(null);
       rowValues[1] = index + 1;
       rowValues[2] = branch;
       rowValues[3] = null; 
@@ -355,58 +314,56 @@ export class ReportsService {
 
       rowValues[11] = bObzvon;
       rowValues[12] = bHandedOver ? bObzvon / bHandedOver : 0; 
-      rowValues[13] = bNoAnswer;
-      rowValues[14] = bUnreachable;
-      rowValues[15] = bCorrectTotal;
-      rowValues[16] = bHandedOver ? bCorrectTotal / bHandedOver : 0; 
+      rowValues[13] = bDuplicates;
+      rowValues[14] = bNoAnswer;
+      rowValues[15] = bUnreachable;
+      rowValues[16] = bCorrectTotal;
+      rowValues[17] = bHandedOver ? bCorrectTotal / bHandedOver : 0; 
 
-      let cIdx = 17;
-      // Оценки по категориям
+      let cIdx = 18;
+      // Оценки по категориям (6 штук)
       CATEGORIES.forEach((cat) => {
         SCORES.forEach((s) => {
           const count = branchRatings[`${cat.id}-${s}`] || 0;
           rowValues[cIdx++] = count;
-          rowValues[cIdx++] = bObzvon > 0 ? count / bObzvon : 0;
+          rowValues[cIdx++] = bHandedOver > 0 ? count / bHandedOver : 0; 
         });
       });
-      
       // Оценки ВСЕГО
       SCORES.forEach((s) => {
         const count = branchTotalScores[s] || 0;
         rowValues[cIdx++] = count;
-        rowValues[cIdx++] = bObzvon > 0 ? count / bObzvon : 0;
+        rowValues[cIdx++] = bHandedOver > 0 ? count / bHandedOver : 0; 
       });
 
-      rowValues[65] = bFeedNeg;
-      rowValues[66] = bObzvon ? bFeedNeg / bObzvon : 0; 
-      rowValues[67] = bFeedPos;
-      rowValues[68] = bFeedNotRel;
-      rowValues[69] = 'Вкладка "Ссылки"'; 
+      rowValues[74] = bFeedNeg;
+      rowValues[75] = bHandedOver ? bFeedNeg / bHandedOver : 0; 
+      rowValues[76] = bFeedPos;
+      rowValues[77] = bFeedNotRel;
+      rowValues[78] = 'Вкладка "Ссылки"'; 
 
       const row = worksheet.addRow(rowValues.slice(1));
 
-      [10, 12, 16, 66].forEach((c) => { row.getCell(c).numFmt = '0.0%'; });
-      
-      let pIdx = 17;
-      for (let i = 0; i < 24; i++) { // 6 * 4 колонок оценок (включая ВСЕГО)
-        pIdx++;
-        row.getCell(pIdx++).numFmt = '0.0%';
+      [10, 12, 17, 75].forEach((c) => { row.getCell(c).numFmt = '0.0%'; });
+      for (let i = 19; i <= 73; i += 2) {
+        row.getCell(i).numFmt = '0.0%';
       }
 
       row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
         cell.border = borderStyle;
         cell.alignment = alignCenter;
-        if (colNumber === 69) {
+        if (colNumber === 78) {
           cell.font = { color: { argb: '0000FF' }, underline: true, italic: true };
         }
         if (cell.value === 0 || cell.value === '0 (0.0%)') cell.value = '';
       });
 
       totals.handedOver += bHandedOver;
-      totals.incorrectTotal += bIncorrectTotal;
       totals.wrongNum += bWrongNumTotal;
       totals.noWa += bNoWa;
+      totals.incorrectTotal += bIncorrectTotal;
       totals.obzvon += bObzvon;
+      totals.duplicates += bDuplicates;
       totals.noAnswer += bNoAnswer;
       totals.unreachable += bUnreachable;
       totals.correctTotal += bCorrectTotal;
@@ -416,45 +373,43 @@ export class ReportsService {
     });
 
     // ИТОГО
-    const totalRowValues = Array(70).fill(null);
+    const totalRowValues = Array(79).fill(null);
     totalRowValues[1] = 'ИТОГО';
-    totalRowValues[3] = null;
     totalRowValues[4] = totals.handedOver;
-    totalRowValues[5] = null;
     
     totalRowValues[6] = totals.wrongNum;
-    totalRowValues[7] = null;
+    totalRowValues[7] = totals.empNum || null;
     totalRowValues[8] = totals.noWa;
     totalRowValues[9] = totals.incorrectTotal;
     totalRowValues[10] = totals.handedOver ? totals.incorrectTotal / totals.handedOver : 0;
 
     totalRowValues[11] = totals.obzvon;
     totalRowValues[12] = totals.handedOver ? totals.obzvon / totals.handedOver : 0;
-    totalRowValues[13] = totals.noAnswer;
-    totalRowValues[14] = totals.unreachable;
-    totalRowValues[15] = totals.correctTotal;
-    totalRowValues[16] = totals.handedOver ? totals.correctTotal / totals.handedOver : 0;
+    totalRowValues[13] = totals.duplicates;
+    totalRowValues[14] = totals.noAnswer;
+    totalRowValues[15] = totals.unreachable;
+    totalRowValues[16] = totals.correctTotal;
+    totalRowValues[17] = totals.handedOver ? totals.correctTotal / totals.handedOver : 0;
 
-    let totalCIdx = 17;
+    let totalCIdx = 18;
     CATEGORIES.forEach((cat) => {
       SCORES.forEach((s) => {
         const count = totals.ratingsCount[`${cat.id}-${s}`] || 0;
         totalRowValues[totalCIdx++] = count;
-        totalRowValues[totalCIdx++] = totals.obzvon > 0 ? count / totals.obzvon : 0;
+        totalRowValues[totalCIdx++] = totals.handedOver > 0 ? count / totals.handedOver : 0;
       });
     });
     
-    // Глобальное ВСЕГО
     SCORES.forEach((s) => {
       const count = totals.allRatingsCount[s] || 0;
       totalRowValues[totalCIdx++] = count;
-      totalRowValues[totalCIdx++] = totals.obzvon > 0 ? count / totals.obzvon : 0;
+      totalRowValues[totalCIdx++] = totals.handedOver > 0 ? count / totals.handedOver : 0;
     });
 
-    totalRowValues[65] = totals.feedNeg;
-    totalRowValues[66] = totals.obzvon ? totals.feedNeg / totals.obzvon : 0;
-    totalRowValues[67] = totals.feedPos;
-    totalRowValues[68] = totals.feedNotRel;
+    totalRowValues[74] = totals.feedNeg;
+    totalRowValues[75] = totals.handedOver ? totals.feedNeg / totals.handedOver : 0;
+    totalRowValues[76] = totals.feedPos;
+    totalRowValues[77] = totals.feedNotRel;
 
     const totalRow = worksheet.addRow(totalRowValues.slice(1));
     worksheet.mergeCells(`A${totalRow.number}:C${totalRow.number}`);
@@ -467,17 +422,14 @@ export class ReportsService {
       if (cell.value === 0 || cell.value === '0 (0.0%)') cell.value = '';
     });
 
-    [10, 12, 16, 66].forEach((c) => { totalRow.getCell(c).numFmt = '0.0%'; });
-    
-    totalCIdx = 17;
-    for (let i = 0; i < 24; i++) {
-      totalCIdx++;
-      totalRow.getCell(totalCIdx++).numFmt = '0.0%';
+    [10, 12, 17, 75].forEach((c) => { totalRow.getCell(c).numFmt = '0.0%'; });
+    for (let i = 19; i <= 73; i += 2) {
+      totalRow.getCell(i).numFmt = '0.0%';
     }
 
-    worksheet.columns.forEach((col, i) => {
-      if (i === 1) col.width = 20;
-      else if (i === 68) col.width = 18; 
+    worksheet.columns.forEach((col) => {
+      if (col.number === 2) col.width = 20;
+      else if (col.number === 78) col.width = 18; 
       else col.width = 7.5;
     });
 
@@ -624,7 +576,41 @@ export class ReportsService {
 
     errorSheet.addRow([]);
 
-    errorSheet.addRow(['ХАТОЛИКЛАР ТАФСИЛОТИ (Детализация ошибок)']);
+    errorSheet.addRow(['ХАТОЛИКЛАР СТАТИСТИКАСИ ФИЛИАЛЛАР БЎЙИЧА (Статистика по филиалам)']);
+    errorSheet.mergeCells(
+      // @ts-ignore
+      `A${errorSheet.lastRow.number}:C${errorSheet.lastRow.number}`,
+    );
+    // @ts-ignore
+    errorSheet.lastRow.font = { bold: true, size: 12 };
+    // @ts-ignore
+    errorSheet.lastRow.alignment = { horizontal: 'center' };
+
+    errorSheet.addRow(['Филиал', 'Сони (Кол-во)', 'Улуши (%)']);
+    // @ts-ignore
+    errorSheet.lastRow.font = { bold: true };
+    // @ts-ignore
+    errorSheet.lastRow.eachCell((c) => {
+      c.fill = fillStyle(C_GRAY);
+      c.border = borderStyle;
+    });
+
+    branchList.forEach((branch) => {
+      const branchErrorCount = errorsLog.filter((e) => e.branch === branch).length;
+      if (branchErrorCount > 0) {
+        const row = errorSheet.addRow([
+          branch,
+          branchErrorCount,
+          totalErrors ? branchErrorCount / totalErrors : 0,
+        ]);
+        row.getCell(3).numFmt = '0.0%';
+        row.eachCell((c) => (c.border = borderStyle));
+      }
+    });
+
+    errorSheet.addRow([]);
+
+    errorSheet.addRow(['ХАТОЛИКЛАР ТАФСИЛОТИ (Детализация ошибок по филиалам)']);
     errorSheet.mergeCells(
       // @ts-ignore
       `A${errorSheet.lastRow.number}:H${errorSheet.lastRow.number}`,
@@ -644,19 +630,32 @@ export class ReportsService {
       c.alignment = alignCenter;
     });
 
-    errorsLog.forEach((e, i) => {
-      const mappedCategory = ERROR_CATEGORIES_MAPPING[e.category as keyof typeof ERROR_CATEGORIES_MAPPING] || e.category;
-      const row = errorSheet.addRow([
-        i + 1,
-        format(e.arrivalDate, 'dd.MM.yyyy'),
-        format(e.createdAt, 'dd.MM.yyyy HH:mm'),
-        e.lineNumber,
-        e.name || '-',
-        e.phone || '-',
-        e.branch || '-',
-        `[${mappedCategory}] - ${e.errorMessages.join('; ')}`,
-      ]);
-      row.eachCell((c) => (c.border = borderStyle));
+    let errorIndex = 1;
+    branchList.forEach((branch) => {
+      const branchErrors = errorsLog.filter((e) => e.branch === branch);
+      if (branchErrors.length === 0) return;
+
+      const titleRow = errorSheet.addRow([`ФИЛИАЛ: ${branch.toUpperCase()}`]);
+      titleRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      titleRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F4E78' } };
+      // @ts-ignore
+      errorSheet.mergeCells(`A${titleRow.number}:H${titleRow.number}`);
+      titleRow.alignment = { horizontal: 'center' };
+
+      branchErrors.forEach((e) => {
+        const mappedCategory = ERROR_CATEGORIES_MAPPING[e.category as keyof typeof ERROR_CATEGORIES_MAPPING] || e.category;
+        const row = errorSheet.addRow([
+          errorIndex++,
+          format(e.arrivalDate, 'dd.MM.yyyy'),
+          format(e.createdAt, 'dd.MM.yyyy HH:mm'),
+          e.lineNumber,
+          e.name || '-',
+          e.phone || '-',
+          e.branch || '-',
+          `[${mappedCategory}] - ${e.errorMessages.join('; ')}`,
+        ]);
+        row.eachCell((c) => (c.border = borderStyle));
+      });
     });
 
     errorSheet.columns.forEach((c, i) => {

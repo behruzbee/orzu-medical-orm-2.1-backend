@@ -134,6 +134,15 @@ export class FeedbacksService {
         const patientPhone = request.patient?.phone || 'Неизвестно';
         const branchName = request.branch || 'Неизвестно';
 
+        const arrivalDateStr = request.arrivalDate
+          ? new Date(request.arrivalDate).toLocaleDateString('ru-RU', {
+              timeZone: 'Asia/Tashkent',
+              day: '2-digit',
+              month: '2-digit',
+              year: 'numeric',
+            })
+          : 'Не указана';
+
         const translationMap: Record<string, string> = {
           doctors: 'Шифокорлар (Врачи)',
           nurses: 'Ҳамширалар (Медсестры)',
@@ -187,15 +196,17 @@ export class FeedbacksService {
         const titleType = type === 'complaint' ? 'Жалоба' : 'Предложение';
         const icon = type === 'complaint' ? '📋' : '💡';
 
-        const cardDesc = `${icon} ${titleType} от пациента
+        // Добавлено поле "Дата заезда"
+        const cardDesc = `${icon} ${titleType} по заявке
 👤 ФИО: ${patientName}
 📞 Телефон: ${patientPhone}
 🏥 Филиал: ${branchName}
+🗓 Дата заезда: ${arrivalDateStr}
 📂 Категория: ${categoryText}
 📝 Текст ва Далиллар:
-${dto.comment || 'Пациент не оставил комментарий.'}${evidenceText}${ratingsText}
+${dto.comment || 'К заявке не оставлен комментарий.'}${evidenceText}${ratingsText}
 
-📅 Дата: ${dateStr}
+📅 Дата отправки: ${dateStr}
 🆔 FeedbackID: ${savedFeedback.id}`;
 
         const card = await this.trelloService.createCard(
