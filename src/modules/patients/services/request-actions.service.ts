@@ -81,6 +81,7 @@ export class RequestActionsService {
       operatorId,
     );
   }
+  
   async revertStatus(requestId: string) {
     const request = await this.requestRepository.findOne({
       where: { id: requestId },
