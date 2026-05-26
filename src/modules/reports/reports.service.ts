@@ -89,7 +89,11 @@ export class ReportsService {
     const titleRow = worksheet.getCell('A1');
     titleRow.value = titleText.toUpperCase();
     titleRow.font = { name: 'Times New Roman', size: 12, bold: true };
-    titleRow.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    titleRow.alignment = {
+      vertical: 'middle',
+      horizontal: 'center',
+      wrapText: true,
+    };
     worksheet.getRow(1).height = 40;
 
     worksheet.mergeCells(2, 1, 2, 78);
@@ -103,12 +107,38 @@ export class ReportsService {
     row3.height = 30;
     row4.height = 80;
 
-    const fillStyle = (color: string) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: color } }) as ExcelJS.Fill;
-    const borderStyle = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } } as Partial<ExcelJS.Borders>;
-    const alignCenter = { horizontal: 'center', vertical: 'middle', wrapText: true } as Partial<ExcelJS.Alignment>;
-    const alignRotate = { horizontal: 'center', vertical: 'middle', wrapText: true, textRotation: 90 } as Partial<ExcelJS.Alignment>;
+    const fillStyle = (color: string) =>
+      ({
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: color },
+      }) as ExcelJS.Fill;
+    const borderStyle = {
+      top: { style: 'thin' },
+      left: { style: 'thin' },
+      bottom: { style: 'thin' },
+      right: { style: 'thin' },
+    } as Partial<ExcelJS.Borders>;
+    const alignCenter = {
+      horizontal: 'center',
+      vertical: 'middle',
+      wrapText: true,
+    } as Partial<ExcelJS.Alignment>;
+    const alignRotate = {
+      horizontal: 'center',
+      vertical: 'middle',
+      wrapText: true,
+      textRotation: 90,
+    } as Partial<ExcelJS.Alignment>;
 
-    const setupHeader = (colSpanStart: number, colSpanEnd: number, topLabel: string, subLabels: string[], color: string, rotateSub: boolean = false) => {
+    const setupHeader = (
+      colSpanStart: number,
+      colSpanEnd: number,
+      topLabel: string,
+      subLabels: string[],
+      color: string,
+      rotateSub: boolean = false,
+    ) => {
       if (colSpanStart === colSpanEnd) {
         worksheet.mergeCells(3, colSpanStart, 4, colSpanStart);
         const cell = row3.getCell(colSpanStart);
@@ -146,7 +176,7 @@ export class ReportsService {
     const C_ORANGE = 'FFF4B084';
     const C_CYAN = 'FFA9D08E';
     const C_PURPLE = 'FFD9E1F2';
-    const C_TEAL = 'FFB4A7D6'; 
+    const C_TEAL = 'FFB4A7D6';
     const C_GOLD = 'FFFFD966';
     const C_PINK = 'FFF4CCCC';
 
@@ -155,12 +185,32 @@ export class ReportsService {
     setupHeader(3, 3, 'кол пациентов за мес', [], C_GRAY);
     setupHeader(4, 4, 'кол. переданных номеров', [], C_GRAY);
     setupHeader(5, 5, '%', [], C_GRAY);
-    
-    // НЕ КОРРЕКТНО
-    setupHeader(6, 10, 'не корректно', ['не правильный номер', 'номер сотрудников', 'нет ватсапа', 'всего', '%'], C_RED, true);
-    
-    // КОРРЕКТНО
-    setupHeader(11, 17, 'корректно', ['обзвон', '%', 'дубликаты', 'не ответили', 'номер отключен', 'Всего', '%'], C_GREEN, true);
+
+    setupHeader(
+      6,
+      10,
+      'не корректно',
+      ['не правильный номер', 'номер сотрудников', 'нет ватсапа', 'всего', '%'],
+      C_RED,
+      true,
+    );
+
+    setupHeader(
+      11,
+      17,
+      'корректно',
+      [
+        'обзвон',
+        '%',
+        'дубликаты',
+        'не ответили',
+        'номер отключен',
+        'Всего',
+        '%',
+      ],
+      C_GREEN,
+      true,
+    );
 
     const catConfigs = [
       { name: 'ВРАЧИ', color: C_BLUE },
@@ -168,21 +218,48 @@ export class ReportsService {
       { name: 'ЧИСТОТА', color: C_ORANGE },
       { name: 'КУХНЯ', color: C_CYAN },
       { name: 'РЕГИСТРАТУРА', color: C_PURPLE },
-      { name: 'КЛИНИКА', color: C_TEAL }, 
+      { name: 'КЛИНИКА', color: C_TEAL },
       { name: 'ВСЕГО', color: C_GOLD },
     ];
 
     let colIdx = 18;
     CATEGORIES.forEach((cat, index) => {
       const subLabels = SCORES.map((s) => [`${cat.prefix} ${s}`, '%']).flat();
-      setupHeader(colIdx, colIdx + 7, catConfigs[index].name, subLabels, catConfigs[index].color, true);
+      setupHeader(
+        colIdx,
+        colIdx + 7,
+        catConfigs[index].name,
+        subLabels,
+        catConfigs[index].color,
+        true,
+      );
       colIdx += 8;
     });
 
     const totalSubLabels = SCORES.map((s) => [`всего ${s}`, '%']).flat();
-    setupHeader(colIdx, colIdx + 7, catConfigs[6].name, totalSubLabels, catConfigs[6].color, true);
+    setupHeader(
+      colIdx,
+      colIdx + 7,
+      catConfigs[6].name,
+      totalSubLabels,
+      catConfigs[6].color,
+      true,
+    );
 
-    setupHeader(74, 78, 'жалобы', ['кол жалоб', '%', 'предложение', 'жалобы каторые не относиться к клинике', 'ссылка'], C_PINK, true);
+    setupHeader(
+      74,
+      78,
+      'жалобы',
+      [
+        'кол жалоб',
+        '%',
+        'предложение',
+        'жалобы каторые не относиться к клинике',
+        'ссылка',
+      ],
+      C_PINK,
+      true,
+    );
 
     const reqBranches = requests.map((r) => r.branch).filter(Boolean);
     const errBranches = errorsLog.map((e) => e.branch).filter(Boolean);
@@ -212,13 +289,24 @@ export class ReportsService {
 
       const bHandedOver = bReqs.length + bErrors.length;
 
-      const duplicateErrors = bErrors.filter((e) => e.category === 'DUPLICATE_FILE').length;
+      const duplicateErrors = bErrors.filter(
+        (e) => e.category === 'DUPLICATE_FILE',
+      ).length;
       const otherErrors = bErrors.length - duplicateErrors;
 
-      const bWrongNumberStatus = bReqs.filter((r) => r.status === RequestStatus.WRONG_NUMBER).length;
+      const bWrongNumberStatus = bReqs.filter(
+        (r) => r.status === RequestStatus.WRONG_NUMBER,
+      ).length;
       const bWrongNumTotal = bWrongNumberStatus + otherErrors;
-      const bEmpNum = null;
-      const bNoWa = bReqs.filter((r) => r.status === RequestStatus.HAS_NOT_WHATSAPP).length;
+
+      // 🔥 ОБНОВЛЕНИЕ: Считаем количество номеров сотрудников по статусу EMPLOYEE
+      const bEmpNum = bReqs.filter(
+        (r) => r.status === RequestStatus.EMPLOYEE,
+      ).length;
+
+      const bNoWa = bReqs.filter(
+        (r) => r.status === RequestStatus.HAS_NOT_WHATSAPP,
+      ).length;
 
       // Всего (Не корректно)
       const bIncorrectTotal = bWrongNumTotal + (bEmpNum || 0) + bNoWa;
@@ -233,19 +321,34 @@ export class ReportsService {
       );
       const bObzvon = successRequests.length;
 
-      const bNoAnswer = bReqs.filter((r) => r.status === RequestStatus.NO_ANSWER).length;
-      const bUnreachable = bReqs.filter((r) => r.status === RequestStatus.UNREACHABLE).length;
+      const bNoAnswer = bReqs.filter(
+        (r) => r.status === RequestStatus.NO_ANSWER,
+      ).length;
+      const bUnreachable = bReqs.filter(
+        (r) => r.status === RequestStatus.UNREACHABLE,
+      ).length;
       const bDuplicates = duplicateErrors;
 
       // Всего (Корректно)
       const bCorrectTotal = bObzvon + bDuplicates + bNoAnswer + bUnreachable;
 
-      const bFeedNeg = bReqs.filter((r) => r.status === RequestStatus.FEEDBACK_NEGATIVE).length;
-      const bFeedPos = bReqs.filter((r) => r.status === RequestStatus.FEEDBACK_POSITIVE).length;
-      const bFeedNotRel = bReqs.filter((r) => r.status === RequestStatus.FEEDBACK_NOT_RELATED).length;
+      const bFeedNeg = bReqs.filter(
+        (r) => r.status === RequestStatus.FEEDBACK_NEGATIVE,
+      ).length;
+      const bFeedPos = bReqs.filter(
+        (r) => r.status === RequestStatus.FEEDBACK_POSITIVE,
+      ).length;
+      const bFeedNotRel = bReqs.filter(
+        (r) => r.status === RequestStatus.FEEDBACK_NOT_RELATED,
+      ).length;
 
       const branchRatings: Record<string, number> = {};
-      const branchTotalScores: Record<number, number> = { 5: 0, 4: 0, 3: 0, 2: 0 };
+      const branchTotalScores: Record<number, number> = {
+        5: 0,
+        4: 0,
+        3: 0,
+        2: 0,
+      };
 
       // Оценки по обзвону
       successRequests.forEach((req) => {
@@ -253,19 +356,22 @@ export class ReportsService {
 
         let ratingsObj = req.feedback?.ratings;
         if (typeof ratingsObj === 'string') {
-          try { ratingsObj = JSON.parse(ratingsObj); } catch(e) { ratingsObj = {}; }
+          try {
+            ratingsObj = JSON.parse(ratingsObj);
+          } catch (e) {
+            ratingsObj = {};
+          }
         }
 
         CATEGORIES.forEach((cat) => {
           let score = 5;
 
-          // 🔥 ИСПРАВЛЕНИЕ: Если жалоба не относится к клинике, ставим строго 5!
           if (req.status === RequestStatus.FEEDBACK_NOT_RELATED) {
             score = 5;
           } else {
             let rawScore = ratingsObj?.[cat.id];
             if (rawScore !== undefined && rawScore !== null) {
-              score = Number(rawScore); 
+              score = Number(rawScore);
             }
             if (!SCORES.includes(score)) score = 5;
           }
@@ -274,77 +380,77 @@ export class ReportsService {
           branchRatings[key] = (branchRatings[key] || 0) + 1;
           totals.ratingsCount[key] = (totals.ratingsCount[key] || 0) + 1;
 
-          // Определяем минимальную (худшую) оценку пациента
           if (score < patientOverallScore) {
             patientOverallScore = score;
           }
         });
 
-        // 1 пациент дает строго 1 голос в колонке ВСЕГО по его минимальной оценке
         branchTotalScores[patientOverallScore] += 1;
-        totals.allRatingsCount[patientOverallScore] = (totals.allRatingsCount[patientOverallScore] || 0) + 1;
+        totals.allRatingsCount[patientOverallScore] =
+          (totals.allRatingsCount[patientOverallScore] || 0) + 1;
       });
 
-      // Дубликаты, Не ответили и Отключен дают рейтинг 5 по всем категориям
       const extraFivesCount = bDuplicates + bNoAnswer + bUnreachable;
-      
+
       if (extraFivesCount > 0) {
         CATEGORIES.forEach((cat) => {
           const key = `${cat.id}-5`;
           branchRatings[key] = (branchRatings[key] || 0) + extraFivesCount;
-          totals.ratingsCount[key] = (totals.ratingsCount[key] || 0) + extraFivesCount;
+          totals.ratingsCount[key] =
+            (totals.ratingsCount[key] || 0) + extraFivesCount;
         });
 
         branchTotalScores[5] += extraFivesCount;
-        totals.allRatingsCount[5] = (totals.allRatingsCount[5] || 0) + extraFivesCount;
+        totals.allRatingsCount[5] =
+          (totals.allRatingsCount[5] || 0) + extraFivesCount;
       }
 
       const rowValues = Array(79).fill(null);
       rowValues[1] = index + 1;
       rowValues[2] = branch;
-      rowValues[3] = null; 
+      rowValues[3] = null;
       rowValues[4] = bHandedOver;
-      rowValues[5] = null; 
+      rowValues[5] = null;
 
       rowValues[6] = bWrongNumTotal;
-      rowValues[7] = bEmpNum; 
+      rowValues[7] = bEmpNum;
       rowValues[8] = bNoWa;
       rowValues[9] = bIncorrectTotal;
-      rowValues[10] = bHandedOver ? bIncorrectTotal / bHandedOver : 0; 
+      rowValues[10] = bHandedOver ? bIncorrectTotal / bHandedOver : 0;
 
       rowValues[11] = bObzvon;
-      rowValues[12] = bHandedOver ? bObzvon / bHandedOver : 0; 
+      rowValues[12] = bHandedOver ? bObzvon / bHandedOver : 0;
       rowValues[13] = bDuplicates;
       rowValues[14] = bNoAnswer;
       rowValues[15] = bUnreachable;
       rowValues[16] = bCorrectTotal;
-      rowValues[17] = bHandedOver ? bCorrectTotal / bHandedOver : 0; 
+      rowValues[17] = bHandedOver ? bCorrectTotal / bHandedOver : 0;
 
       let cIdx = 18;
-      // Оценки по категориям (6 штук)
       CATEGORIES.forEach((cat) => {
         SCORES.forEach((s) => {
           const count = branchRatings[`${cat.id}-${s}`] || 0;
           rowValues[cIdx++] = count;
-          rowValues[cIdx++] = bHandedOver > 0 ? count / bHandedOver : 0; 
+          rowValues[cIdx++] = bHandedOver > 0 ? count / bHandedOver : 0;
         });
       });
-      // Оценки ВСЕГО
       SCORES.forEach((s) => {
         const count = branchTotalScores[s] || 0;
         rowValues[cIdx++] = count;
-        rowValues[cIdx++] = bHandedOver > 0 ? count / bHandedOver : 0; 
+        rowValues[cIdx++] = bHandedOver > 0 ? count / bHandedOver : 0;
       });
 
       rowValues[74] = bFeedNeg;
-      rowValues[75] = bHandedOver ? bFeedNeg / bHandedOver : 0; 
+      rowValues[75] = bHandedOver ? bFeedNeg / bHandedOver : 0;
       rowValues[76] = bFeedPos;
       rowValues[77] = bFeedNotRel;
-      rowValues[78] = 'Вкладка "Ссылки"'; 
+      rowValues[78] = 'Вкладка "Ссылки"';
 
       const row = worksheet.addRow(rowValues.slice(1));
 
-      [10, 12, 17, 75].forEach((c) => { row.getCell(c).numFmt = '0.0%'; });
+      [10, 12, 17, 75].forEach((c) => {
+        row.getCell(c).numFmt = '0.0%';
+      });
       for (let i = 19; i <= 73; i += 2) {
         row.getCell(i).numFmt = '0.0%';
       }
@@ -353,13 +459,18 @@ export class ReportsService {
         cell.border = borderStyle;
         cell.alignment = alignCenter;
         if (colNumber === 78) {
-          cell.font = { color: { argb: '0000FF' }, underline: true, italic: true };
+          cell.font = {
+            color: { argb: '0000FF' },
+            underline: true,
+            italic: true,
+          };
         }
         if (cell.value === 0 || cell.value === '0 (0.0%)') cell.value = '';
       });
 
       totals.handedOver += bHandedOver;
       totals.wrongNum += bWrongNumTotal;
+      totals.empNum += bEmpNum; // 🔥 ОБНОВЛЕНИЕ: Добавляем в итоговую сумму
       totals.noWa += bNoWa;
       totals.incorrectTotal += bIncorrectTotal;
       totals.obzvon += bObzvon;
@@ -376,38 +487,48 @@ export class ReportsService {
     const totalRowValues = Array(79).fill(null);
     totalRowValues[1] = 'ИТОГО';
     totalRowValues[4] = totals.handedOver;
-    
+
     totalRowValues[6] = totals.wrongNum;
-    totalRowValues[7] = totals.empNum || null;
+    totalRowValues[7] = totals.empNum; // 🔥 ОБНОВЛЕНИЕ: Передаем реальное количество в строку ИТОГО
     totalRowValues[8] = totals.noWa;
     totalRowValues[9] = totals.incorrectTotal;
-    totalRowValues[10] = totals.handedOver ? totals.incorrectTotal / totals.handedOver : 0;
+    totalRowValues[10] = totals.handedOver
+      ? totals.incorrectTotal / totals.handedOver
+      : 0;
 
     totalRowValues[11] = totals.obzvon;
-    totalRowValues[12] = totals.handedOver ? totals.obzvon / totals.handedOver : 0;
+    totalRowValues[12] = totals.handedOver
+      ? totals.obzvon / totals.handedOver
+      : 0;
     totalRowValues[13] = totals.duplicates;
     totalRowValues[14] = totals.noAnswer;
     totalRowValues[15] = totals.unreachable;
     totalRowValues[16] = totals.correctTotal;
-    totalRowValues[17] = totals.handedOver ? totals.correctTotal / totals.handedOver : 0;
+    totalRowValues[17] = totals.handedOver
+      ? totals.correctTotal / totals.handedOver
+      : 0;
 
     let totalCIdx = 18;
     CATEGORIES.forEach((cat) => {
       SCORES.forEach((s) => {
         const count = totals.ratingsCount[`${cat.id}-${s}`] || 0;
         totalRowValues[totalCIdx++] = count;
-        totalRowValues[totalCIdx++] = totals.handedOver > 0 ? count / totals.handedOver : 0;
+        totalRowValues[totalCIdx++] =
+          totals.handedOver > 0 ? count / totals.handedOver : 0;
       });
     });
-    
+
     SCORES.forEach((s) => {
       const count = totals.allRatingsCount[s] || 0;
       totalRowValues[totalCIdx++] = count;
-      totalRowValues[totalCIdx++] = totals.handedOver > 0 ? count / totals.handedOver : 0;
+      totalRowValues[totalCIdx++] =
+        totals.handedOver > 0 ? count / totals.handedOver : 0;
     });
 
     totalRowValues[74] = totals.feedNeg;
-    totalRowValues[75] = totals.handedOver ? totals.feedNeg / totals.handedOver : 0;
+    totalRowValues[75] = totals.handedOver
+      ? totals.feedNeg / totals.handedOver
+      : 0;
     totalRowValues[76] = totals.feedPos;
     totalRowValues[77] = totals.feedNotRel;
 
@@ -422,14 +543,16 @@ export class ReportsService {
       if (cell.value === 0 || cell.value === '0 (0.0%)') cell.value = '';
     });
 
-    [10, 12, 17, 75].forEach((c) => { totalRow.getCell(c).numFmt = '0.0%'; });
+    [10, 12, 17, 75].forEach((c) => {
+      totalRow.getCell(c).numFmt = '0.0%';
+    });
     for (let i = 19; i <= 73; i += 2) {
       totalRow.getCell(i).numFmt = '0.0%';
     }
 
     worksheet.columns.forEach((col) => {
       if (col.number === 2) col.width = 20;
-      else if (col.number === 78) col.width = 18; 
+      else if (col.number === 78) col.width = 18;
       else col.width = 7.5;
     });
 
@@ -437,13 +560,26 @@ export class ReportsService {
     // 3. ВКЛАДКА 2: ССЫЛКИ И МЕДИА
     // ==========================================
     const linksSheet = workbook.addWorksheet('Хаволалар (Ссылки)');
-    linksSheet.addRow(['ДЕТАЛИЗАЦИЯ ЖАЛОБ И ПРЕДЛОЖЕНИЙ (ССЫЛКИ TRELLO И ФАЙЛЫ)']);
+    linksSheet.addRow([
+      'ДЕТАЛИЗАЦИЯ ЖАЛОБ И ПРЕДЛОЖЕНИЙ (ССЫЛКИ TRELLO И ФАЙЛЫ)',
+    ]);
     linksSheet.mergeCells('A1:G1');
     linksSheet.getCell('A1').font = { bold: true, size: 12 };
-    linksSheet.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' };
+    linksSheet.getCell('A1').alignment = {
+      horizontal: 'center',
+      vertical: 'middle',
+    };
     linksSheet.getRow(1).height = 30;
 
-    const linkHeaders = ['№', 'Филиал', 'Бемор (Пациент)', 'Телефон', 'Тип', 'Trello URL', 'Файлы (Медиа)'];
+    const linkHeaders = [
+      '№',
+      'Филиал',
+      'Бемор (Пациент)',
+      'Телефон',
+      'Тип',
+      'Trello URL',
+      'Файлы (Медиа)',
+    ];
     const lRow = linksSheet.addRow(linkHeaders);
     lRow.eachCell((c) => {
       c.fill = fillStyle(C_GRAY);
@@ -466,7 +602,8 @@ export class ReportsService {
       const itemsToPrint = bReqs.filter(
         (r) =>
           r.feedback?.trelloUrl ||
-          (r.feedback?.evidenceMessages && r.feedback.evidenceMessages.length > 0),
+          (r.feedback?.evidenceMessages &&
+            r.feedback.evidenceMessages.length > 0),
       );
 
       if (itemsToPrint.length === 0) return;
@@ -526,11 +663,11 @@ export class ReportsService {
 
     linksSheet.columns.forEach((c, i) => {
       if (i === 0) c.width = 6;
-      else if (i === 1) c.width = 20; 
-      else if (i === 2) c.width = 30; 
-      else if (i === 3) c.width = 20; 
-      else if (i === 4) c.width = 25; 
-      else c.width = 25; 
+      else if (i === 1) c.width = 20;
+      else if (i === 2) c.width = 30;
+      else if (i === 3) c.width = 20;
+      else if (i === 4) c.width = 25;
+      else c.width = 25;
     });
 
     // ==========================================
@@ -544,7 +681,11 @@ export class ReportsService {
     errorSheet.getCell('A1').font = { bold: true, size: 12 };
     errorSheet.getCell('A1').alignment = { horizontal: 'center' };
 
-    errorSheet.addRow(['Хатолик тури (Категория)', 'Сони (Кол-во)', 'Улуши (%)']);
+    errorSheet.addRow([
+      'Хатолик тури (Категория)',
+      'Сони (Кол-во)',
+      'Улуши (%)',
+    ]);
     // @ts-ignore
     errorSheet.lastRow.font = { bold: true };
     // @ts-ignore
@@ -576,7 +717,9 @@ export class ReportsService {
 
     errorSheet.addRow([]);
 
-    errorSheet.addRow(['ХАТОЛИКЛАР СТАТИСТИКАСИ ФИЛИАЛЛАР БЎЙИЧА (Статистика по филиалам)']);
+    errorSheet.addRow([
+      'ХАТОЛИКЛАР СТАТИСТИКАСИ ФИЛИАЛЛАР БЎЙИЧА (Статистика по филиалам)',
+    ]);
     errorSheet.mergeCells(
       // @ts-ignore
       `A${errorSheet.lastRow.number}:C${errorSheet.lastRow.number}`,
@@ -596,7 +739,9 @@ export class ReportsService {
     });
 
     branchList.forEach((branch) => {
-      const branchErrorCount = errorsLog.filter((e) => e.branch === branch).length;
+      const branchErrorCount = errorsLog.filter(
+        (e) => e.branch === branch,
+      ).length;
       if (branchErrorCount > 0) {
         const row = errorSheet.addRow([
           branch,
@@ -610,7 +755,9 @@ export class ReportsService {
 
     errorSheet.addRow([]);
 
-    errorSheet.addRow(['ХАТОЛИКЛАР ТАФСИЛОТИ (Детализация ошибок по филиалам)']);
+    errorSheet.addRow([
+      'ХАТОЛИКЛАР ТАФСИЛОТИ (Детализация ошибок по филиалам)',
+    ]);
     errorSheet.mergeCells(
       // @ts-ignore
       `A${errorSheet.lastRow.number}:H${errorSheet.lastRow.number}`,
@@ -621,7 +768,14 @@ export class ReportsService {
     errorSheet.lastRow.alignment = { horizontal: 'center' };
 
     const detRow = errorSheet.addRow([
-      '№', 'Келган сана', 'Юкланган сана', 'Қатор (Excel)', 'Ф.И.Ш (Имя)', 'Телефон', 'Филиал', 'Изох (Ошибка)',
+      '№',
+      'Келган сана',
+      'Юкланган сана',
+      'Қатор (Excel)',
+      'Ф.И.Ш (Имя)',
+      'Телефон',
+      'Филиал',
+      'Изох (Ошибка)',
     ]);
     detRow.font = { bold: true };
     detRow.eachCell((c) => {
@@ -637,13 +791,20 @@ export class ReportsService {
 
       const titleRow = errorSheet.addRow([`ФИЛИАЛ: ${branch.toUpperCase()}`]);
       titleRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-      titleRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F4E78' } };
+      titleRow.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FF1F4E78' },
+      };
       // @ts-ignore
       errorSheet.mergeCells(`A${titleRow.number}:H${titleRow.number}`);
       titleRow.alignment = { horizontal: 'center' };
 
       branchErrors.forEach((e) => {
-        const mappedCategory = ERROR_CATEGORIES_MAPPING[e.category as keyof typeof ERROR_CATEGORIES_MAPPING] || e.category;
+        const mappedCategory =
+          ERROR_CATEGORIES_MAPPING[
+            e.category as keyof typeof ERROR_CATEGORIES_MAPPING
+          ] || e.category;
         const row = errorSheet.addRow([
           errorIndex++,
           format(e.arrivalDate, 'dd.MM.yyyy'),
@@ -681,7 +842,10 @@ export class ReportsService {
     const filePath = path.join(uploadDir, fileName);
     await fs.writeFile(filePath, buffer);
 
-    const backendUrl = process.env.UPLOAD_URL || process.env.BACKEND_URL || 'http://localhost:3000';
+    const backendUrl =
+      process.env.UPLOAD_URL ||
+      process.env.BACKEND_URL ||
+      'http://localhost:3000';
     return this.reportRepository.save(
       this.reportRepository.create({
         name: fileName,
@@ -699,10 +863,14 @@ export class ReportsService {
       try {
         const fileName = report.fileUrl.split('/').pop();
         if (fileName) {
-          await fs.unlink(path.join(process.cwd(), 'uploads', 'reports', fileName));
+          await fs.unlink(
+            path.join(process.cwd(), 'uploads', 'reports', fileName),
+          );
         }
       } catch (e: any) {
-        this.logger.warn(`Could not delete file for report ${id}: ${e.message}`);
+        this.logger.warn(
+          `Could not delete file for report ${id}: ${e.message}`,
+        );
       }
       return this.reportRepository.delete(id);
     }
