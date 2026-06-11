@@ -162,4 +162,19 @@ export class RequestsController {
   async cancelImport(@Param('sessionId') sessionId: string) {
     return this.patientsImportService.cancelImport(sessionId);
   }
+
+  @Delete(':requestId')
+  async removeRequest(@Param('requestId') requestId: string) {
+    return this.patientsService.softRemoveRequest(requestId);
+  }
+
+  @Delete('profile/:patientId')
+  async removePatient(@Param('patientId') patientId: string) {
+    return this.patientsService.softRemovePatient(patientId);
+  }
+
+  @Patch('profile/:patientId/restore')
+  async restorePatient(@Param('patientId') patientId: string) {
+    return this.patientsService.restorePatient(patientId);
+  }
 }

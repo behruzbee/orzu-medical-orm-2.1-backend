@@ -18,6 +18,51 @@ export class PatientsService {
     private patientRepository: Repository<Patient>,
   ) {}
 
+  async softRemoveRequest(id: string) {
+    const request = await this.requestRepository.findOne({
+      where: { id },
+    });
+
+    if (!request) {
+      throw new NotFoundException('Arizani (Заявку) topilmadi');
+    }
+
+    await this.requestRepository.softRemove(request);
+
+    return {
+      message: 'Ariza arxivga olindi (Заявка перенесена в корзину)',
+    };
+  }
+
+  async softRemovePatient(patientId: string) {
+    const patient = await this.patientRepository.findOne({
+      where: { id: patientId },
+      relations: ['requests'], 
+    });
+
+    if (!patient) {
+      throw new NotFoundException('Bemor topilmadi (Пациент не найден)');
+    }
+
+    if (patient.requests && patient.requests.length > 0) {
+      await this.requestRepository.softRemove(patient.requests);
+    }
+
+    await this.patientRepository.softRemove(patient);
+
+    return {
+      message:
+        'Bemor va uning arizalari arxivga olindi (Пациент и заявки перенесены в корзину)',
+    };
+  }
+
+  async restorePatient(patientId: string) {
+    await this.patientRepository.restore(patientId);
+    await this.requestRepository.restore({ patient: { id: patientId } });
+
+    return { message: 'Bemor tiklandi (Пациент восстановлен)' };
+  }
+
   async findAll(query: FindAllPatientsDto) {
     const {
       page = 1,

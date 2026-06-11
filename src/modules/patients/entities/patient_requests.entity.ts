@@ -1,17 +1,18 @@
-import { RequestStatus } from "src/common/enums/request-status.enum";
-import { 
-  Column, 
-  CreateDateColumn, 
-  Entity, 
-  ManyToOne, 
-  OneToOne, 
+import { RequestStatus } from 'src/common/enums/request-status.enum';
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  ManyToOne,
+  OneToOne,
   PrimaryGeneratedColumn,
   JoinColumn,
-  UpdateDateColumn 
-} from "typeorm";
-import { Patient } from "./patient.entity";
-import { CallStatus } from "src/modules/call-history/entities/call-status.entity";
-import { Feedback } from "src/modules/feedbacks/entities/feedback.entity"; // Пример пути
+  UpdateDateColumn,
+  DeleteDateColumn,
+} from 'typeorm';
+import { Patient } from './patient.entity';
+import { CallStatus } from 'src/modules/call-history/entities/call-status.entity';
+import { Feedback } from 'src/modules/feedbacks/entities/feedback.entity'; // Пример пути
 
 @Entity('patient_requests')
 export class PatientRequest {
@@ -34,15 +35,17 @@ export class PatientRequest {
   @Column({ type: 'timestamp' })
   arrivalDate: Date;
 
-  @ManyToOne(() => Patient, (patient) => patient.requests, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'patientId' }) 
+  @ManyToOne(() => Patient, (patient) => patient.requests, {
+    onDelete: 'CASCADE',
+  })
+  @JoinColumn({ name: 'patientId' })
   patient: Patient;
 
   @Column()
   patientId: string;
 
   @OneToOne(() => CallStatus, (call) => call.request)
-  callStatus: CallStatus; 
+  callStatus: CallStatus;
 
   @OneToOne(() => Feedback, (feedback) => feedback.request)
   feedback: Feedback;
@@ -52,4 +55,7 @@ export class PatientRequest {
 
   @UpdateDateColumn()
   updatedAt: Date;
+
+  @DeleteDateColumn()
+  deletedAt?: Date;
 }
