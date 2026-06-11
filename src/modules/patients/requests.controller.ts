@@ -177,4 +177,5 @@ export class RequestsController {
   async restorePatient(@Param('patientId') patientId: string) {
     return this.patientsService.restorePatient(patientId);
   }
+  
 }
