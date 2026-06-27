@@ -1,10 +1,19 @@
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 
 import { Patient } from '../entities/patient.entity';
 import { PatientRequest } from '../entities/patient_requests.entity';
 import { FindAllPatientsDto } from '../dto/find-all-patients.dto';
+import { CreateIntegrationRequestDto } from '../dto/create-integration-request.dto';
+import { RequestStatus } from 'src/common/enums/request-status.enum';
+import { normalizePhone } from 'src/common/utils/phone.util';
+import { getRandomColor } from 'src/common/utils/color.util';
 
 @Injectable()
 export class PatientsService {
@@ -17,6 +26,91 @@ export class PatientsService {
     @InjectRepository(Patient)
     private patientRepository: Repository<Patient>,
   ) {}
+
+  async createFromIntegration(dto: CreateIntegrationRequestDto) {
+    const normalizedPhone = normalizePhone(dto.phone);
+
+    if (!normalizedPhone.valid) {
+      throw new BadRequestException("Telefon raqami noto'g'ri formatda");
+    }
+
+    const arrivalDate = new Date(dto.arrivalDate);
+    const departureDate = new Date(dto.departureDate);
+
+    if (Number.isNaN(arrivalDate.getTime())) {
+      throw new BadRequestException('arrivalDate must be a valid ISO date');
+    }
+
+    if (Number.isNaN(departureDate.getTime())) {
+      throw new BadRequestException('departureDate must be a valid ISO date');
+    }
+
+    if (departureDate.getTime() < arrivalDate.getTime()) {
+      throw new BadRequestException('departureDate must be after arrivalDate');
+    }
+
+    const activeRequest = await this.requestRepository.findOne({
+      where: {
+        patient: { phone: normalizedPhone.value },
+        status: In([RequestStatus.NEW, RequestStatus.CONTACTED]),
+      },
+      relations: ['patient'],
+    });
+
+    if (activeRequest) {
+      throw new BadRequestException({
+        message: 'Patient already has an active request',
+        requestId: activeRequest.id,
+        status: activeRequest.status,
+      });
+    }
+
+    return this.patientRepository.manager.transaction(async (manager) => {
+      const patientRepository = manager.getRepository(Patient);
+      const requestRepository = manager.getRepository(PatientRequest);
+
+      let patient = await patientRepository.findOne({
+        where: { phone: normalizedPhone.value },
+      });
+
+      if (!patient) {
+        patient = await patientRepository.save(
+          patientRepository.create({
+            name: dto.name,
+            phone: normalizedPhone.value,
+            avatarColor: getRandomColor(),
+          }),
+        );
+      }
+
+      const request = await requestRepository.save(
+        requestRepository.create({
+          patientId: patient.id,
+          branch: dto.branch,
+          arrivalDate,
+          departureDate,
+          status: RequestStatus.NEW,
+        }),
+      );
+
+      return {
+        success: true,
+        externalId: dto.externalId || null,
+        patient: {
+          id: patient.id,
+          name: patient.name,
+          phone: patient.phone,
+        },
+        request: {
+          id: request.id,
+          status: request.status,
+          branch: request.branch,
+          arrivalDate: request.arrivalDate,
+          departureDate: request.departureDate,
+        },
+      };
+    });
+  }
 
   async softRemoveRequest(id: string) {
     const request = await this.requestRepository.findOne({
@@ -37,7 +131,7 @@ export class PatientsService {
   async softRemovePatient(patientId: string) {
     const patient = await this.patientRepository.findOne({
       where: { id: patientId },
-      relations: ['requests'], 
+      relations: ['requests'],
     });
 
     if (!patient) {

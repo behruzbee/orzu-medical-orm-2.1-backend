@@ -25,6 +25,39 @@
 
 [Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
 
+## Swagger and Integration API
+
+After the backend starts, Swagger UI is available at:
+
+```bash
+http://localhost:3000/api/docs
+```
+
+Swagger supports two authorization schemes:
+
+- `jwt` - Bearer token from `POST /api/auth/login` for operator cabinet routes.
+- `x-api-key` - integration key for external-system routes.
+
+Integration keys are configured through `.env`:
+
+```bash
+INTEGRATION_API_KEYS=key-one,key-two
+```
+
+For backward compatibility, `EXTERNAL_API_KEY` and `EXTERNAL_API_KEYS` are also accepted.
+
+External systems should send the key in the header:
+
+```http
+x-api-key: key-one
+```
+
+Available integration endpoints:
+
+- `GET /api/integration/health` - validate API availability and key.
+- `POST /api/integration/requests` - create a patient request.
+- `GET /api/integration/requests/:requestId` - read a patient request by ID.
+
 ## Project setup
 
 ```bash

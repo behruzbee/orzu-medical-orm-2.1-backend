@@ -5,6 +5,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import * as path from 'path';
 import { json, urlencoded } from 'express';
 import { runSeed } from './seed';
+import { setupSwagger } from './swagger';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -39,6 +40,8 @@ async function bootstrap() {
     prefix: '/uploads/',
   });
 
+  setupSwagger(app);
+
   try {
     await runSeed(app);
   } catch (e) {
@@ -48,6 +51,7 @@ async function bootstrap() {
   await app.listen(port);
 
   logger.log(`🚀 Application is running on: http://localhost:${port}/api`);
+  logger.log(`📘 Swagger docs: http://localhost:${port}/api/docs`);
   logger.log(`📂 Serving static files from: ${uploadsPath}`);
 }
 bootstrap();

@@ -9,18 +9,23 @@ import {
 import { Response } from 'express';
 import { FeedbacksService } from './feedbacks.service';
 import { AuthGuard } from '@nestjs/passport';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
+@ApiTags('Feedbacks')
 @Controller('feedbacks')
 export class FeedbacksController {
   constructor(private readonly feedbacksService: FeedbacksService) {}
 
   @Get()
   @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth('jwt')
+  @ApiOperation({ summary: 'Get all feedback records' })
   getAllFeedbacks() {
     return this.feedbacksService.findAll();
   }
 
   @Get('evidence/:id/file')
+  @ApiOperation({ summary: 'Get evidence media file' })
   async getFile(@Param('id') id: string, @Res({ passthrough: true }) res) {
     const evidence = await this.feedbacksService.getEvidenceFile(id);
 
