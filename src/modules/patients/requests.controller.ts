@@ -13,6 +13,7 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  ParseEnumPipe,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -21,12 +22,15 @@ import {
   ApiBody,
   ApiConsumes,
   ApiOperation,
+  ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
 
 import { FindAllPatientsDto } from './dto/find-all-patients.dto';
+import { StatsPeriodQueryDto } from './dto/stats-period-query.dto';
 import { AddCallStatusDto } from '../call-history/dto/add-call-status.dto';
 import { CreateFeedbackDto } from '../feedbacks/dto/create-feedback.dto';
+import { RequestStatus } from 'src/common/enums/request-status.enum';
 
 import { PatientsService } from './services/patients.service';
 import { PatientsImportService } from './services/patients-import.service';
@@ -59,6 +63,24 @@ export class RequestsController {
   @ApiOperation({ summary: 'Get request funnel statistics' })
   getStats() {
     return this.patientsStatsService.getStats();
+  }
+
+  @Get('stats/period')
+  @ApiOperation({
+    summary: 'Get transferred numbers and status statistics by period',
+  })
+  getPeriodStats(@Query() query: StatsPeriodQueryDto) {
+    return this.patientsStatsService.getPeriodStats(query);
+  }
+
+  @Get('stats/period/status/:status')
+  @ApiOperation({ summary: 'Get one request status count by period' })
+  @ApiParam({ name: 'status', enum: RequestStatus })
+  getStatusPeriodStats(
+    @Param('status', new ParseEnumPipe(RequestStatus)) status: RequestStatus,
+    @Query() query: StatsPeriodQueryDto,
+  ) {
+    return this.patientsStatsService.getStatusPeriodStats(status, query);
   }
 
   // ==========================================
@@ -215,5 +237,4 @@ export class RequestsController {
   async restorePatient(@Param('patientId') patientId: string) {
     return this.patientsService.restorePatient(patientId);
   }
-  
 }

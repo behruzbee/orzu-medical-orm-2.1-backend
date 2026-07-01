@@ -431,17 +431,17 @@ export class ReportsService {
         SCORES.forEach((s) => {
           const count = branchRatings[`${cat.id}-${s}`] || 0;
           rowValues[cIdx++] = count;
-          rowValues[cIdx++] = bHandedOver > 0 ? count / bHandedOver : 0;
+          rowValues[cIdx++] = bCorrectTotal > 0 ? count / bCorrectTotal : 0;
         });
       });
       SCORES.forEach((s) => {
         const count = branchTotalScores[s] || 0;
         rowValues[cIdx++] = count;
-        rowValues[cIdx++] = bHandedOver > 0 ? count / bHandedOver : 0;
+        rowValues[cIdx++] = bCorrectTotal > 0 ? count / bCorrectTotal : 0;
       });
 
       rowValues[74] = bFeedNeg;
-      rowValues[75] = bHandedOver ? bFeedNeg / bHandedOver : 0;
+      rowValues[75] = bCorrectTotal ? bFeedNeg / bCorrectTotal : 0;
       rowValues[76] = bFeedPos;
       rowValues[77] = bFeedNotRel;
       rowValues[78] = 'Вкладка "Ссылки"';
@@ -514,7 +514,7 @@ export class ReportsService {
         const count = totals.ratingsCount[`${cat.id}-${s}`] || 0;
         totalRowValues[totalCIdx++] = count;
         totalRowValues[totalCIdx++] =
-          totals.handedOver > 0 ? count / totals.handedOver : 0;
+          totals.correctTotal > 0 ? count / totals.correctTotal : 0;
       });
     });
 
@@ -522,12 +522,12 @@ export class ReportsService {
       const count = totals.allRatingsCount[s] || 0;
       totalRowValues[totalCIdx++] = count;
       totalRowValues[totalCIdx++] =
-        totals.handedOver > 0 ? count / totals.handedOver : 0;
+        totals.correctTotal > 0 ? count / totals.correctTotal : 0;
     });
 
     totalRowValues[74] = totals.feedNeg;
-    totalRowValues[75] = totals.handedOver
-      ? totals.feedNeg / totals.handedOver
+    totalRowValues[75] = totals.correctTotal
+      ? totals.feedNeg / totals.correctTotal
       : 0;
     totalRowValues[76] = totals.feedPos;
     totalRowValues[77] = totals.feedNotRel;
