@@ -57,6 +57,7 @@ Available integration endpoints:
 - `GET /api/integration/health` - validate API availability and key.
 - `POST /api/integration/requests` - create a patient request.
 - `GET /api/integration/requests/:requestId` - read a patient request by ID.
+- Report-stat endpoints are documented in `docs/integration-report-stats.md`.
 
 ## Project setup
 

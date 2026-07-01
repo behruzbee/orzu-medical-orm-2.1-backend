@@ -1,27 +1,20 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, Not, In } from 'typeorm';
+import { Repository } from 'typeorm';
 import * as ExcelJS from 'exceljs';
 import { format } from 'date-fns';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
 import { Report } from './entities/report.entity';
-import { PatientRequest } from '../patients/entities/patient_requests.entity';
 import { RequestStatus } from 'src/common/enums/request-status.enum';
 import { GenerateReportDto } from './dto/generate-report.dto';
-import { ImportErrorLog } from '../patients/entities/import-error-log.entity';
-
-const CATEGORIES = [
-  { id: 'doctors', prefix: 'врачи' },
-  { id: 'nurses', prefix: 'медсестры' },
-  { id: 'cleanliness', prefix: 'чистота' },
-  { id: 'food', prefix: 'кухня' },
-  { id: 'reception', prefix: 'регистратура' },
-  { id: 'clinic', prefix: 'клиника' },
-];
-
-const SCORES = [5, 4, 3, 2];
+import {
+  REPORT_RATING_CATEGORIES,
+  REPORT_SCORE_VALUES,
+  REPORT_TOTAL_RATING_CATEGORY,
+  ReportStatsService,
+} from 'src/common/report-stats/report-stats.service';
 
 const ERROR_CATEGORIES_MAPPING = {
   ACTIVE_REQUEST_EXISTS: 'Фаол ариза мавжуд (Уже в работе)',
@@ -40,10 +33,7 @@ export class ReportsService {
   constructor(
     @InjectRepository(Report)
     private reportRepository: Repository<Report>,
-    @InjectRepository(PatientRequest)
-    private requestRepository: Repository<PatientRequest>,
-    @InjectRepository(ImportErrorLog)
-    private errorLogRepository: Repository<ImportErrorLog>,
+    private readonly reportStatsService: ReportStatsService,
   ) {}
 
   async findAll() {
@@ -53,27 +43,11 @@ export class ReportsService {
   }
 
   async generateReport(dto: GenerateReportDto) {
-    const start = new Date(dto.startDate);
-    start.setHours(0, 0, 0, 0);
-
-    const end = new Date(dto.endDate);
-    end.setHours(23, 59, 59, 999);
-
-    // ==========================================
-    // 1. ВЫБОРКА ДАННЫХ
-    // ==========================================
-    const requests = await this.requestRepository.find({
-      where: {
-        arrivalDate: Between(start, end),
-        status: Not(In([RequestStatus.NEW, RequestStatus.CONTACTED])),
-      },
-      relations: ['patient', 'feedback', 'feedback.evidenceMessages'],
+    const reportData = await this.reportStatsService.loadReportData(dto, {
+      includeReportRelations: true,
     });
-
-    const errorsLog = await this.errorLogRepository.find({
-      where: { arrivalDate: Between(start, end) },
-      order: { createdAt: 'DESC' },
-    });
+    const { start, end, requests, errorsLog, branchList, branches, totals } =
+      reportData;
 
     const workbook = new ExcelJS.Workbook();
 
@@ -223,8 +197,11 @@ export class ReportsService {
     ];
 
     let colIdx = 18;
-    CATEGORIES.forEach((cat, index) => {
-      const subLabels = SCORES.map((s) => [`${cat.prefix} ${s}`, '%']).flat();
+    REPORT_RATING_CATEGORIES.forEach((cat, index) => {
+      const subLabels = REPORT_SCORE_VALUES.map((s) => [
+        `${cat.scorePrefix} ${s}`,
+        '%',
+      ]).flat();
       setupHeader(
         colIdx,
         colIdx + 7,
@@ -236,7 +213,10 @@ export class ReportsService {
       colIdx += 8;
     });
 
-    const totalSubLabels = SCORES.map((s) => [`всего ${s}`, '%']).flat();
+    const totalSubLabels = REPORT_SCORE_VALUES.map((s) => [
+      `${REPORT_TOTAL_RATING_CATEGORY.scorePrefix} ${s}`,
+      '%',
+    ]).flat();
     setupHeader(
       colIdx,
       colIdx + 7,
@@ -261,189 +241,46 @@ export class ReportsService {
       true,
     );
 
-    const reqBranches = requests.map((r) => r.branch).filter(Boolean);
-    const errBranches = errorsLog.map((e) => e.branch).filter(Boolean);
-    const branchList = [...new Set([...reqBranches, ...errBranches])];
-
-    const totals = {
-      handedOver: 0,
-      wrongNum: 0,
-      empNum: 0,
-      noWa: 0,
-      incorrectTotal: 0,
-      obzvon: 0,
-      duplicates: 0,
-      noAnswer: 0,
-      unreachable: 0,
-      correctTotal: 0,
-      feedNeg: 0,
-      feedPos: 0,
-      feedNotRel: 0,
-      ratingsCount: {} as Record<string, number>,
-      allRatingsCount: {} as Record<number, number>,
-    };
-
-    branchList.forEach((branch, index) => {
-      const bReqs = requests.filter((r) => r.branch === branch);
-      const bErrors = errorsLog.filter((e) => e.branch === branch);
-
-      const bHandedOver = bReqs.length + bErrors.length;
-
-      const duplicateErrors = bErrors.filter(
-        (e) => e.category === 'DUPLICATE_FILE',
-      ).length;
-      const otherErrors = bErrors.length - duplicateErrors;
-
-      const bWrongNumberStatus = bReqs.filter(
-        (r) => r.status === RequestStatus.WRONG_NUMBER,
-      ).length;
-      const bWrongNumTotal = bWrongNumberStatus + otherErrors;
-
-      // 🔥 ОБНОВЛЕНИЕ: Считаем количество номеров сотрудников по статусу EMPLOYEE
-      const bEmpNum = bReqs.filter(
-        (r) => r.status === RequestStatus.EMPLOYEE,
-      ).length;
-
-      const bNoWa = bReqs.filter(
-        (r) => r.status === RequestStatus.HAS_NOT_WHATSAPP,
-      ).length;
-
-      // Всего (Не корректно)
-      const bIncorrectTotal = bWrongNumTotal + (bEmpNum || 0) + bNoWa;
-
-      const successRequests = bReqs.filter((r) =>
-        [
-          RequestStatus.ALL_OK,
-          RequestStatus.FEEDBACK_POSITIVE,
-          RequestStatus.FEEDBACK_NEGATIVE,
-          RequestStatus.FEEDBACK_NOT_RELATED,
-        ].includes(r.status),
-      );
-      const bObzvon = successRequests.length;
-
-      const bNoAnswer = bReqs.filter(
-        (r) => r.status === RequestStatus.NO_ANSWER,
-      ).length;
-      const bUnreachable = bReqs.filter(
-        (r) => r.status === RequestStatus.UNREACHABLE,
-      ).length;
-      const bDuplicates = duplicateErrors;
-
-      // Всего (Корректно)
-      const bCorrectTotal = bObzvon + bDuplicates + bNoAnswer + bUnreachable;
-
-      const bFeedNeg = bReqs.filter(
-        (r) => r.status === RequestStatus.FEEDBACK_NEGATIVE,
-      ).length;
-      const bFeedPos = bReqs.filter(
-        (r) => r.status === RequestStatus.FEEDBACK_POSITIVE,
-      ).length;
-      const bFeedNotRel = bReqs.filter(
-        (r) => r.status === RequestStatus.FEEDBACK_NOT_RELATED,
-      ).length;
-
-      const branchRatings: Record<string, number> = {};
-      const branchTotalScores: Record<number, number> = {
-        5: 0,
-        4: 0,
-        3: 0,
-        2: 0,
-      };
-
-      // Оценки по обзвону
-      successRequests.forEach((req) => {
-        let patientOverallScore = 5;
-
-        let ratingsObj = req.feedback?.ratings;
-        if (typeof ratingsObj === 'string') {
-          try {
-            ratingsObj = JSON.parse(ratingsObj);
-          } catch (e) {
-            ratingsObj = {};
-          }
-        }
-
-        CATEGORIES.forEach((cat) => {
-          let score = 5;
-
-          if (req.status === RequestStatus.FEEDBACK_NOT_RELATED) {
-            score = 5;
-          } else {
-            let rawScore = ratingsObj?.[cat.id];
-            if (rawScore !== undefined && rawScore !== null) {
-              score = Number(rawScore);
-            }
-            if (!SCORES.includes(score)) score = 5;
-          }
-
-          const key = `${cat.id}-${score}`;
-          branchRatings[key] = (branchRatings[key] || 0) + 1;
-          totals.ratingsCount[key] = (totals.ratingsCount[key] || 0) + 1;
-
-          if (score < patientOverallScore) {
-            patientOverallScore = score;
-          }
-        });
-
-        branchTotalScores[patientOverallScore] += 1;
-        totals.allRatingsCount[patientOverallScore] =
-          (totals.allRatingsCount[patientOverallScore] || 0) + 1;
-      });
-
-      const extraFivesCount = bDuplicates + bNoAnswer + bUnreachable;
-
-      if (extraFivesCount > 0) {
-        CATEGORIES.forEach((cat) => {
-          const key = `${cat.id}-5`;
-          branchRatings[key] = (branchRatings[key] || 0) + extraFivesCount;
-          totals.ratingsCount[key] =
-            (totals.ratingsCount[key] || 0) + extraFivesCount;
-        });
-
-        branchTotalScores[5] += extraFivesCount;
-        totals.allRatingsCount[5] =
-          (totals.allRatingsCount[5] || 0) + extraFivesCount;
-      }
-
+    branches.forEach((branchStats, index) => {
       const rowValues = Array(79).fill(null);
       rowValues[1] = index + 1;
-      rowValues[2] = branch;
+      rowValues[2] = branchStats.branch;
       rowValues[3] = null;
-      rowValues[4] = bHandedOver;
+      rowValues[4] = branchStats.handedOver.count;
       rowValues[5] = null;
 
-      rowValues[6] = bWrongNumTotal;
-      rowValues[7] = bEmpNum;
-      rowValues[8] = bNoWa;
-      rowValues[9] = bIncorrectTotal;
-      rowValues[10] = bHandedOver ? bIncorrectTotal / bHandedOver : 0;
+      rowValues[6] = branchStats.incorrect.wrongNumber.count;
+      rowValues[7] = branchStats.incorrect.employeeNumber.count;
+      rowValues[8] = branchStats.incorrect.hasNotWhatsapp.count;
+      rowValues[9] = branchStats.incorrect.total.count;
+      rowValues[10] = branchStats.incorrect.total.ratio || 0;
 
-      rowValues[11] = bObzvon;
-      rowValues[12] = bHandedOver ? bObzvon / bHandedOver : 0;
-      rowValues[13] = bDuplicates;
-      rowValues[14] = bNoAnswer;
-      rowValues[15] = bUnreachable;
-      rowValues[16] = bCorrectTotal;
-      rowValues[17] = bHandedOver ? bCorrectTotal / bHandedOver : 0;
+      rowValues[11] = branchStats.correct.called.count;
+      rowValues[12] = branchStats.correct.called.ratio || 0;
+      rowValues[13] = branchStats.correct.duplicates.count;
+      rowValues[14] = branchStats.correct.noAnswer.count;
+      rowValues[15] = branchStats.correct.unreachable.count;
+      rowValues[16] = branchStats.correct.total.count;
+      rowValues[17] = branchStats.correct.total.ratio || 0;
 
       let cIdx = 18;
-      CATEGORIES.forEach((cat) => {
-        SCORES.forEach((s) => {
-          const count = branchRatings[`${cat.id}-${s}`] || 0;
-          rowValues[cIdx++] = count;
-          rowValues[cIdx++] = bCorrectTotal > 0 ? count / bCorrectTotal : 0;
+      REPORT_RATING_CATEGORIES.forEach((cat) => {
+        REPORT_SCORE_VALUES.forEach((s) => {
+          const value = branchStats.ratings[cat.id][s];
+          rowValues[cIdx++] = value.count;
+          rowValues[cIdx++] = value.ratio || 0;
         });
       });
-      SCORES.forEach((s) => {
-        const count = branchTotalScores[s] || 0;
-        rowValues[cIdx++] = count;
-        rowValues[cIdx++] = bCorrectTotal > 0 ? count / bCorrectTotal : 0;
+      REPORT_SCORE_VALUES.forEach((s) => {
+        const value = branchStats.ratings.total[s];
+        rowValues[cIdx++] = value.count;
+        rowValues[cIdx++] = value.ratio || 0;
       });
 
-      rowValues[74] = bFeedNeg;
-      rowValues[75] = bCorrectTotal ? bFeedNeg / bCorrectTotal : 0;
-      rowValues[76] = bFeedPos;
-      rowValues[77] = bFeedNotRel;
+      rowValues[74] = branchStats.feedback.complaints.count;
+      rowValues[75] = branchStats.feedback.complaints.ratio || 0;
+      rowValues[76] = branchStats.feedback.suggestions.count;
+      rowValues[77] = branchStats.feedback.notRelatedComplaints.count;
       rowValues[78] = 'Вкладка "Ссылки"';
 
       const row = worksheet.addRow(rowValues.slice(1));
@@ -467,70 +304,46 @@ export class ReportsService {
         }
         if (cell.value === 0 || cell.value === '0 (0.0%)') cell.value = '';
       });
-
-      totals.handedOver += bHandedOver;
-      totals.wrongNum += bWrongNumTotal;
-      totals.empNum += bEmpNum; // 🔥 ОБНОВЛЕНИЕ: Добавляем в итоговую сумму
-      totals.noWa += bNoWa;
-      totals.incorrectTotal += bIncorrectTotal;
-      totals.obzvon += bObzvon;
-      totals.duplicates += bDuplicates;
-      totals.noAnswer += bNoAnswer;
-      totals.unreachable += bUnreachable;
-      totals.correctTotal += bCorrectTotal;
-      totals.feedNeg += bFeedNeg;
-      totals.feedPos += bFeedPos;
-      totals.feedNotRel += bFeedNotRel;
     });
 
     // ИТОГО
     const totalRowValues = Array(79).fill(null);
     totalRowValues[1] = 'ИТОГО';
-    totalRowValues[4] = totals.handedOver;
+    totalRowValues[4] = totals.handedOver.count;
 
-    totalRowValues[6] = totals.wrongNum;
-    totalRowValues[7] = totals.empNum; // 🔥 ОБНОВЛЕНИЕ: Передаем реальное количество в строку ИТОГО
-    totalRowValues[8] = totals.noWa;
-    totalRowValues[9] = totals.incorrectTotal;
-    totalRowValues[10] = totals.handedOver
-      ? totals.incorrectTotal / totals.handedOver
-      : 0;
+    totalRowValues[6] = totals.incorrect.wrongNumber.count;
+    totalRowValues[7] = totals.incorrect.employeeNumber.count;
+    totalRowValues[8] = totals.incorrect.hasNotWhatsapp.count;
+    totalRowValues[9] = totals.incorrect.total.count;
+    totalRowValues[10] = totals.incorrect.total.ratio || 0;
 
-    totalRowValues[11] = totals.obzvon;
-    totalRowValues[12] = totals.handedOver
-      ? totals.obzvon / totals.handedOver
-      : 0;
-    totalRowValues[13] = totals.duplicates;
-    totalRowValues[14] = totals.noAnswer;
-    totalRowValues[15] = totals.unreachable;
-    totalRowValues[16] = totals.correctTotal;
-    totalRowValues[17] = totals.handedOver
-      ? totals.correctTotal / totals.handedOver
-      : 0;
+    totalRowValues[11] = totals.correct.called.count;
+    totalRowValues[12] = totals.correct.called.ratio || 0;
+    totalRowValues[13] = totals.correct.duplicates.count;
+    totalRowValues[14] = totals.correct.noAnswer.count;
+    totalRowValues[15] = totals.correct.unreachable.count;
+    totalRowValues[16] = totals.correct.total.count;
+    totalRowValues[17] = totals.correct.total.ratio || 0;
 
     let totalCIdx = 18;
-    CATEGORIES.forEach((cat) => {
-      SCORES.forEach((s) => {
-        const count = totals.ratingsCount[`${cat.id}-${s}`] || 0;
-        totalRowValues[totalCIdx++] = count;
-        totalRowValues[totalCIdx++] =
-          totals.correctTotal > 0 ? count / totals.correctTotal : 0;
+    REPORT_RATING_CATEGORIES.forEach((cat) => {
+      REPORT_SCORE_VALUES.forEach((s) => {
+        const value = totals.ratings[cat.id][s];
+        totalRowValues[totalCIdx++] = value.count;
+        totalRowValues[totalCIdx++] = value.ratio || 0;
       });
     });
 
-    SCORES.forEach((s) => {
-      const count = totals.allRatingsCount[s] || 0;
-      totalRowValues[totalCIdx++] = count;
-      totalRowValues[totalCIdx++] =
-        totals.correctTotal > 0 ? count / totals.correctTotal : 0;
+    REPORT_SCORE_VALUES.forEach((s) => {
+      const value = totals.ratings.total[s];
+      totalRowValues[totalCIdx++] = value.count;
+      totalRowValues[totalCIdx++] = value.ratio || 0;
     });
 
-    totalRowValues[74] = totals.feedNeg;
-    totalRowValues[75] = totals.correctTotal
-      ? totals.feedNeg / totals.correctTotal
-      : 0;
-    totalRowValues[76] = totals.feedPos;
-    totalRowValues[77] = totals.feedNotRel;
+    totalRowValues[74] = totals.feedback.complaints.count;
+    totalRowValues[75] = totals.feedback.complaints.ratio || 0;
+    totalRowValues[76] = totals.feedback.suggestions.count;
+    totalRowValues[77] = totals.feedback.notRelatedComplaints.count;
 
     const totalRow = worksheet.addRow(totalRowValues.slice(1));
     worksheet.mergeCells(`A${totalRow.number}:C${totalRow.number}`);

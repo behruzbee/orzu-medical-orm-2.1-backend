@@ -17,6 +17,7 @@ import { CallHistoryModule } from '../call-history/call-history.module';
 import { FeedbacksModule } from '../feedbacks/feedbacks.module';
 import { ImportErrorLog } from './entities/import-error-log.entity';
 import { ApiKeyGuard } from 'src/common/guards/api-keys.guard';
+import { ReportStatsService } from 'src/common/report-stats/report-stats.service';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { ApiKeyGuard } from 'src/common/guards/api-keys.guard';
     PatientsImportService,
     RequestActionsService,
     PatientsStatsService,
+    ReportStatsService,
     ApiKeyGuard,
   ],
   exports: [PatientsService],

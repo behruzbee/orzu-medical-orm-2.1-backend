@@ -1,0 +1,654 @@
+import { BadRequestException, Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Between, FindOptionsWhere, In, Not, Repository } from 'typeorm';
+
+import { RequestStatus } from 'src/common/enums/request-status.enum';
+import { ImportErrorLog } from 'src/modules/patients/entities/import-error-log.entity';
+import { PatientRequest } from 'src/modules/patients/entities/patient_requests.entity';
+
+export const REPORT_RATING_CATEGORIES = [
+  { id: 'doctors', label: 'ВРАЧИ', scorePrefix: 'врачи' },
+  { id: 'nurses', label: 'МЕДСЕСТРЫ', scorePrefix: 'медсестры' },
+  { id: 'cleanliness', label: 'ЧИСТОТА', scorePrefix: 'чистота' },
+  { id: 'food', label: 'КУХНЯ', scorePrefix: 'кухня' },
+  { id: 'reception', label: 'РЕГИСТРАТУРА', scorePrefix: 'регистратура' },
+  { id: 'clinic', label: 'КЛИНИКА', scorePrefix: 'клиника' },
+] as const;
+
+export const REPORT_TOTAL_RATING_CATEGORY = {
+  id: 'total',
+  label: 'ВСЕГО',
+  scorePrefix: 'всего',
+} as const;
+
+export const REPORT_SCORE_VALUES = [5, 4, 3, 2] as const;
+
+export type ReportRatingCategoryId =
+  | (typeof REPORT_RATING_CATEGORIES)[number]['id']
+  | typeof REPORT_TOTAL_RATING_CATEGORY.id;
+export type ReportScore = (typeof REPORT_SCORE_VALUES)[number];
+
+export const REPORT_METRIC_DEFINITIONS = {
+  'transferred-numbers': {
+    label: 'кол. переданных номеров',
+    column: 4,
+  },
+  'wrong-number': {
+    label: 'не правильный номер',
+    column: 6,
+  },
+  'employee-number': {
+    label: 'номер сотрудников',
+    column: 7,
+  },
+  'has-not-whatsapp': {
+    label: 'нет ватсапа',
+    column: 8,
+  },
+  'incorrect-total': {
+    label: 'не корректно / всего',
+    column: 9,
+    percentColumn: 10,
+  },
+  called: {
+    label: 'корректно / обзвон',
+    column: 11,
+    percentColumn: 12,
+  },
+  duplicates: {
+    label: 'корректно / дубликаты',
+    column: 13,
+  },
+  'no-answer': {
+    label: 'корректно / не ответили',
+    column: 14,
+  },
+  unreachable: {
+    label: 'корректно / номер отключен',
+    column: 15,
+  },
+  'correct-total': {
+    label: 'корректно / Всего',
+    column: 16,
+    percentColumn: 17,
+  },
+  complaints: {
+    label: 'жалобы / кол жалоб',
+    column: 74,
+    percentColumn: 75,
+  },
+  suggestions: {
+    label: 'жалобы / предложение',
+    column: 76,
+  },
+  'not-related-complaints': {
+    label: 'жалобы которые не относятся к клинике',
+    column: 77,
+  },
+} as const;
+
+export type ReportMetricKey = keyof typeof REPORT_METRIC_DEFINITIONS;
+
+export interface ReportStatsPeriodQuery {
+  startDate: string;
+  endDate: string;
+  branch?: string;
+}
+
+export interface ReportMetricValue {
+  count: number;
+  ratio: number | null;
+  percent: number | null;
+  base: {
+    key: string;
+    label: string;
+    count: number;
+  } | null;
+}
+
+export interface ReportBranchStats {
+  branch: string | null;
+  handedOver: ReportMetricValue;
+  incorrect: {
+    wrongNumber: ReportMetricValue;
+    employeeNumber: ReportMetricValue;
+    hasNotWhatsapp: ReportMetricValue;
+    total: ReportMetricValue;
+  };
+  correct: {
+    called: ReportMetricValue;
+    duplicates: ReportMetricValue;
+    noAnswer: ReportMetricValue;
+    unreachable: ReportMetricValue;
+    total: ReportMetricValue;
+  };
+  ratings: Record<
+    ReportRatingCategoryId,
+    Record<ReportScore, ReportMetricValue>
+  >;
+  feedback: {
+    complaints: ReportMetricValue;
+    suggestions: ReportMetricValue;
+    notRelatedComplaints: ReportMetricValue;
+  };
+  statusCounts: Array<{
+    status: RequestStatus;
+    label: string;
+    count: number;
+  }>;
+}
+
+export interface ReportStatsData {
+  period: {
+    startDate: string;
+    endDate: string;
+    branch: string | null;
+  };
+  start: Date;
+  end: Date;
+  branchList: string[];
+  requests: PatientRequest[];
+  errorsLog: ImportErrorLog[];
+  branches: ReportBranchStats[];
+  totals: ReportBranchStats;
+}
+
+const ACTIVE_STATUSES = [RequestStatus.NEW, RequestStatus.CONTACTED];
+const SUCCESS_STATUSES = [
+  RequestStatus.ALL_OK,
+  RequestStatus.FEEDBACK_POSITIVE,
+  RequestStatus.FEEDBACK_NEGATIVE,
+  RequestStatus.FEEDBACK_NOT_RELATED,
+];
+
+const STATUS_LABELS: Record<RequestStatus, string> = {
+  [RequestStatus.NEW]: 'Новые',
+  [RequestStatus.CONTACTED]: 'Связались',
+  [RequestStatus.ALL_OK]: 'Все хорошо',
+  [RequestStatus.NO_ANSWER]: 'Не ответили',
+  [RequestStatus.UNREACHABLE]: 'Номер отключен',
+  [RequestStatus.WRONG_NUMBER]: 'Не правильный номер',
+  [RequestStatus.HAS_NOT_WHATSAPP]: 'Нет WhatsApp',
+  [RequestStatus.DUPLICATE]: 'Дубликат',
+  [RequestStatus.HAS_NOT_PHONE_NUMBER]: 'Нет номера телефона',
+  [RequestStatus.OTHER_PROBLEM]: 'Другая проблема',
+  [RequestStatus.EMPLOYEE]: 'Номер сотрудников',
+  [RequestStatus.FEEDBACK_POSITIVE]: 'Предложение',
+  [RequestStatus.FEEDBACK_NEGATIVE]: 'Жалоба',
+  [RequestStatus.FEEDBACK_NOT_RELATED]: 'Жалоба не относится к клинике',
+};
+
+@Injectable()
+export class ReportStatsService {
+  constructor(
+    @InjectRepository(PatientRequest)
+    private readonly requestRepository: Repository<PatientRequest>,
+    @InjectRepository(ImportErrorLog)
+    private readonly errorLogRepository: Repository<ImportErrorLog>,
+  ) {}
+
+  async loadReportData(
+    query: ReportStatsPeriodQuery,
+    options: { includeReportRelations?: boolean } = {},
+  ): Promise<ReportStatsData> {
+    const { start, end } = this.parsePeriod(query);
+    const requestWhere: FindOptionsWhere<PatientRequest> = {
+      arrivalDate: Between(start, end),
+      status: Not(In(ACTIVE_STATUSES)),
+    };
+    const errorWhere: FindOptionsWhere<ImportErrorLog> = {
+      arrivalDate: Between(start, end),
+    };
+
+    if (query.branch) {
+      requestWhere.branch = query.branch;
+      errorWhere.branch = query.branch;
+    }
+
+    const relations = options.includeReportRelations
+      ? ['patient', 'feedback', 'feedback.evidenceMessages']
+      : ['feedback'];
+
+    const [requests, errorsLog] = await Promise.all([
+      this.requestRepository.find({
+        where: requestWhere,
+        relations,
+      }),
+      this.errorLogRepository.find({
+        where: errorWhere,
+        order: { createdAt: 'DESC' },
+      }),
+    ]);
+
+    const reqBranches = requests
+      .map((request) => request.branch)
+      .filter(Boolean);
+    const errBranches = errorsLog.map((error) => error.branch).filter(Boolean);
+    const branchList = [...new Set([...reqBranches, ...errBranches])];
+    const branches = branchList.map((branch) =>
+      this.buildStatsForRows(
+        branch,
+        requests.filter((request) => request.branch === branch),
+        errorsLog.filter((error) => error.branch === branch),
+      ),
+    );
+
+    return {
+      period: {
+        startDate: start.toISOString(),
+        endDate: end.toISOString(),
+        branch: query.branch || null,
+      },
+      start,
+      end,
+      branchList,
+      requests,
+      errorsLog,
+      branches,
+      totals: this.buildStatsForRows(null, requests, errorsLog),
+    };
+  }
+
+  async getReportStats(query: ReportStatsPeriodQuery) {
+    return this.toPublicStats(await this.loadReportData(query));
+  }
+
+  async getMetric(query: ReportStatsPeriodQuery, metric: string) {
+    const key = this.parseMetric(metric);
+    const data = await this.loadReportData(query);
+
+    return {
+      period: data.period,
+      metric: {
+        key,
+        ...REPORT_METRIC_DEFINITIONS[key],
+      },
+      total: this.getMetricValue(data.totals, key),
+      byBranch: data.branches.map((branchStats) => ({
+        branch: branchStats.branch,
+        value: this.getMetricValue(branchStats, key),
+      })),
+    };
+  }
+
+  async getRatingCategory(query: ReportStatsPeriodQuery, category: string) {
+    const categoryId = this.parseRatingCategory(category);
+    const data = await this.loadReportData(query);
+    const definition = this.getRatingCategoryDefinition(categoryId);
+
+    return {
+      period: data.period,
+      category: definition,
+      total: data.totals.ratings[categoryId],
+      byBranch: data.branches.map((branchStats) => ({
+        branch: branchStats.branch,
+        scores: branchStats.ratings[categoryId],
+      })),
+    };
+  }
+
+  async getRatingScore(
+    query: ReportStatsPeriodQuery,
+    category: string,
+    scoreParam: string,
+  ) {
+    const categoryId = this.parseRatingCategory(category);
+    const score = this.parseScore(scoreParam);
+    const data = await this.loadReportData(query);
+    const definition = this.getRatingCategoryDefinition(categoryId);
+
+    return {
+      period: data.period,
+      category: definition,
+      score,
+      total: data.totals.ratings[categoryId][score],
+      byBranch: data.branches.map((branchStats) => ({
+        branch: branchStats.branch,
+        value: branchStats.ratings[categoryId][score],
+      })),
+    };
+  }
+
+  async getStatusCount(query: ReportStatsPeriodQuery, status: RequestStatus) {
+    const data = await this.loadReportData(query);
+
+    return {
+      period: data.period,
+      status,
+      label: STATUS_LABELS[status],
+      total: data.totals.statusCounts.find((item) => item.status === status),
+      byBranch: data.branches.map((branchStats) => ({
+        branch: branchStats.branch,
+        value: branchStats.statusCounts.find((item) => item.status === status),
+      })),
+    };
+  }
+
+  getMetricDefinitions() {
+    return REPORT_METRIC_DEFINITIONS;
+  }
+
+  getRatingCategoryDefinitions() {
+    return [...REPORT_RATING_CATEGORIES, REPORT_TOTAL_RATING_CATEGORY];
+  }
+
+  private parsePeriod(query: ReportStatsPeriodQuery) {
+    const start = new Date(query.startDate);
+    start.setHours(0, 0, 0, 0);
+
+    const end = new Date(query.endDate);
+    end.setHours(23, 59, 59, 999);
+
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      throw new BadRequestException(
+        'startDate and endDate must be valid dates',
+      );
+    }
+
+    if (end.getTime() < start.getTime()) {
+      throw new BadRequestException('endDate must be after startDate');
+    }
+
+    return { start, end };
+  }
+
+  private buildStatsForRows(
+    branch: string | null,
+    requests: PatientRequest[],
+    errors: ImportErrorLog[],
+  ): ReportBranchStats {
+    const duplicateErrors = errors.filter(
+      (error) => error.category === 'DUPLICATE_FILE',
+    ).length;
+    const otherErrors = errors.length - duplicateErrors;
+    const handedOver = requests.length + errors.length;
+    const wrongNumberStatus = this.countStatus(
+      requests,
+      RequestStatus.WRONG_NUMBER,
+    );
+    const wrongNumberTotal = wrongNumberStatus + otherErrors;
+    const employeeNumber = this.countStatus(requests, RequestStatus.EMPLOYEE);
+    const hasNotWhatsapp = this.countStatus(
+      requests,
+      RequestStatus.HAS_NOT_WHATSAPP,
+    );
+    const incorrectTotal = wrongNumberTotal + employeeNumber + hasNotWhatsapp;
+    const successRequests = requests.filter((request) =>
+      SUCCESS_STATUSES.includes(request.status),
+    );
+    const called = successRequests.length;
+    const noAnswer = this.countStatus(requests, RequestStatus.NO_ANSWER);
+    const unreachable = this.countStatus(requests, RequestStatus.UNREACHABLE);
+    const correctTotal = called + duplicateErrors + noAnswer + unreachable;
+    const ratingCounts = this.buildRatingCounts(
+      successRequests,
+      duplicateErrors + noAnswer + unreachable,
+    );
+
+    return {
+      branch,
+      handedOver: this.metric(handedOver),
+      incorrect: {
+        wrongNumber: this.metric(wrongNumberTotal),
+        employeeNumber: this.metric(employeeNumber),
+        hasNotWhatsapp: this.metric(hasNotWhatsapp),
+        total: this.metric(incorrectTotal, handedOver, {
+          key: 'transferred-numbers',
+          label: REPORT_METRIC_DEFINITIONS['transferred-numbers'].label,
+        }),
+      },
+      correct: {
+        called: this.metric(called, handedOver, {
+          key: 'transferred-numbers',
+          label: REPORT_METRIC_DEFINITIONS['transferred-numbers'].label,
+        }),
+        duplicates: this.metric(duplicateErrors),
+        noAnswer: this.metric(noAnswer),
+        unreachable: this.metric(unreachable),
+        total: this.metric(correctTotal, handedOver, {
+          key: 'transferred-numbers',
+          label: REPORT_METRIC_DEFINITIONS['transferred-numbers'].label,
+        }),
+      },
+      ratings: this.buildRatingMetrics(ratingCounts, correctTotal),
+      feedback: {
+        complaints: this.metric(
+          this.countStatus(requests, RequestStatus.FEEDBACK_NEGATIVE),
+          correctTotal,
+          {
+            key: 'correct-total',
+            label: REPORT_METRIC_DEFINITIONS['correct-total'].label,
+          },
+        ),
+        suggestions: this.metric(
+          this.countStatus(requests, RequestStatus.FEEDBACK_POSITIVE),
+        ),
+        notRelatedComplaints: this.metric(
+          this.countStatus(requests, RequestStatus.FEEDBACK_NOT_RELATED),
+        ),
+      },
+      statusCounts: Object.values(RequestStatus).map((status) => ({
+        status,
+        label: STATUS_LABELS[status],
+        count: this.countStatus(requests, status),
+      })),
+    };
+  }
+
+  private buildRatingCounts(
+    successRequests: PatientRequest[],
+    extraFivesCount: number,
+  ) {
+    const counts = this.createRatingCounts();
+
+    successRequests.forEach((request) => {
+      let patientOverallScore: ReportScore = 5;
+      const ratingsObj = this.normalizeRatings(request.feedback?.ratings);
+
+      REPORT_RATING_CATEGORIES.forEach((category) => {
+        let score: ReportScore = 5;
+
+        if (request.status !== RequestStatus.FEEDBACK_NOT_RELATED) {
+          const rawScore = ratingsObj[category.id];
+          const numericScore = Number(rawScore);
+          score = REPORT_SCORE_VALUES.includes(numericScore as ReportScore)
+            ? (numericScore as ReportScore)
+            : 5;
+        }
+
+        counts[category.id][score] += 1;
+
+        if (score < patientOverallScore) {
+          patientOverallScore = score;
+        }
+      });
+
+      counts.total[patientOverallScore] += 1;
+    });
+
+    if (extraFivesCount > 0) {
+      REPORT_RATING_CATEGORIES.forEach((category) => {
+        counts[category.id][5] += extraFivesCount;
+      });
+      counts.total[5] += extraFivesCount;
+    }
+
+    return counts;
+  }
+
+  private buildRatingMetrics(
+    counts: Record<ReportRatingCategoryId, Record<ReportScore, number>>,
+    correctTotal: number,
+  ): Record<ReportRatingCategoryId, Record<ReportScore, ReportMetricValue>> {
+    const result = this.createRatingMetrics();
+
+    [...REPORT_RATING_CATEGORIES, REPORT_TOTAL_RATING_CATEGORY].forEach(
+      (category) => {
+        REPORT_SCORE_VALUES.forEach((score) => {
+          result[category.id][score] = this.metric(
+            counts[category.id][score],
+            correctTotal,
+            {
+              key: 'correct-total',
+              label: REPORT_METRIC_DEFINITIONS['correct-total'].label,
+            },
+          );
+        });
+      },
+    );
+
+    return result;
+  }
+
+  private createRatingCounts() {
+    const result = {} as Record<
+      ReportRatingCategoryId,
+      Record<ReportScore, number>
+    >;
+
+    [...REPORT_RATING_CATEGORIES, REPORT_TOTAL_RATING_CATEGORY].forEach(
+      (category) => {
+        result[category.id] = {} as Record<ReportScore, number>;
+        REPORT_SCORE_VALUES.forEach((score) => {
+          result[category.id][score] = 0;
+        });
+      },
+    );
+
+    return result;
+  }
+
+  private createRatingMetrics() {
+    const result = {} as Record<
+      ReportRatingCategoryId,
+      Record<ReportScore, ReportMetricValue>
+    >;
+
+    [...REPORT_RATING_CATEGORIES, REPORT_TOTAL_RATING_CATEGORY].forEach(
+      (category) => {
+        result[category.id] = {} as Record<ReportScore, ReportMetricValue>;
+      },
+    );
+
+    return result;
+  }
+
+  private normalizeRatings(ratings: unknown): Record<string, unknown> {
+    if (!ratings) return {};
+
+    if (typeof ratings === 'string') {
+      try {
+        return JSON.parse(ratings);
+      } catch {
+        return {};
+      }
+    }
+
+    if (typeof ratings === 'object') {
+      return ratings as Record<string, unknown>;
+    }
+
+    return {};
+  }
+
+  private metric(
+    count: number,
+    baseCount?: number,
+    base?: { key: string; label: string },
+  ): ReportMetricValue {
+    const hasBase = typeof baseCount === 'number' && base;
+    const ratio = hasBase ? (baseCount > 0 ? count / baseCount : 0) : null;
+
+    return {
+      count,
+      ratio,
+      percent: ratio === null ? null : Number((ratio * 100).toFixed(1)),
+      base: hasBase
+        ? {
+            ...base,
+            count: baseCount,
+          }
+        : null,
+    };
+  }
+
+  private countStatus(requests: PatientRequest[], status: RequestStatus) {
+    return requests.filter((request) => request.status === status).length;
+  }
+
+  private getMetricValue(stats: ReportBranchStats, metric: ReportMetricKey) {
+    const metricMap: Record<ReportMetricKey, ReportMetricValue> = {
+      'transferred-numbers': stats.handedOver,
+      'wrong-number': stats.incorrect.wrongNumber,
+      'employee-number': stats.incorrect.employeeNumber,
+      'has-not-whatsapp': stats.incorrect.hasNotWhatsapp,
+      'incorrect-total': stats.incorrect.total,
+      called: stats.correct.called,
+      duplicates: stats.correct.duplicates,
+      'no-answer': stats.correct.noAnswer,
+      unreachable: stats.correct.unreachable,
+      'correct-total': stats.correct.total,
+      complaints: stats.feedback.complaints,
+      suggestions: stats.feedback.suggestions,
+      'not-related-complaints': stats.feedback.notRelatedComplaints,
+    };
+
+    return metricMap[metric];
+  }
+
+  private parseMetric(metric: string): ReportMetricKey {
+    if (metric in REPORT_METRIC_DEFINITIONS) {
+      return metric as ReportMetricKey;
+    }
+
+    throw new BadRequestException(
+      `Unknown metric "${metric}". Use one of: ${Object.keys(
+        REPORT_METRIC_DEFINITIONS,
+      ).join(', ')}`,
+    );
+  }
+
+  private parseRatingCategory(category: string): ReportRatingCategoryId {
+    const ids = [
+      ...REPORT_RATING_CATEGORIES.map((item) => item.id),
+      REPORT_TOTAL_RATING_CATEGORY.id,
+    ];
+
+    if (ids.includes(category as ReportRatingCategoryId)) {
+      return category as ReportRatingCategoryId;
+    }
+
+    throw new BadRequestException(
+      `Unknown rating category "${category}". Use one of: ${ids.join(', ')}`,
+    );
+  }
+
+  private parseScore(score: string): ReportScore {
+    const numericScore = Number(score);
+
+    if (REPORT_SCORE_VALUES.includes(numericScore as ReportScore)) {
+      return numericScore as ReportScore;
+    }
+
+    throw new BadRequestException(
+      `Unknown score "${score}". Use one of: ${REPORT_SCORE_VALUES.join(', ')}`,
+    );
+  }
+
+  private getRatingCategoryDefinition(category: ReportRatingCategoryId) {
+    return [...REPORT_RATING_CATEGORIES, REPORT_TOTAL_RATING_CATEGORY].find(
+      (item) => item.id === category,
+    );
+  }
+
+  private toPublicStats(data: ReportStatsData) {
+    return {
+      period: data.period,
+      totals: data.totals,
+      byBranch: data.branches,
+      availableMetrics: this.getMetricDefinitions(),
+      ratingCategories: this.getRatingCategoryDefinitions(),
+      scores: REPORT_SCORE_VALUES,
+    };
+  }
+}
