@@ -18,6 +18,9 @@ import { BroadcastDto } from './dto/broadcast.dto';
 @Injectable()
 export class WhatsappService implements OnModuleInit {
   private client: Client;
+  private initPromise: Promise<void> | null = null;
+  private isReady = false;
+  private hasStartBeenRequested = false;
   private readonly logger = new Logger(WhatsappService.name);
 
   private qrSubject = new Subject<{ qr: string }>();
@@ -29,49 +32,148 @@ export class WhatsappService implements OnModuleInit {
     @InjectRepository(Patient)
     private patientRepository: Repository<Patient>,
   ) {
+    this.client = this.createClient();
+  }
+
+  onModuleInit() {
+    if (process.env.WHATSAPP_AUTO_START === 'true') {
+      void this.startClient('module-init').catch(() => undefined);
+      return;
+    }
+
+    this.logger.log(
+      'WhatsApp auto-start is disabled. Client will start on QR stream or send action.',
+    );
+  }
+
+  private createClient() {
     const defaultChromePath =
       os.platform() === 'darwin'
         ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-        : '/usr/bin/google-chrome';
+        : '/usr/bin/chromium';
+    const executablePath =
+      process.env.CHROME_BIN ||
+      process.env.PUPPETEER_EXECUTABLE_PATH ||
+      defaultChromePath;
 
-    this.client = new Client({
+    const client = new Client({
       authStrategy: new LocalAuth({ dataPath: './whatsapp-session' }),
       puppeteer: {
-        executablePath: process.env.CHROME_BIN || defaultChromePath,
+        executablePath,
         headless: true,
+        timeout: 60000,
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
           '--disable-gpu',
+          '--disable-software-rasterizer',
+          '--disable-crash-reporter',
+          '--disable-extensions',
+          '--disable-background-networking',
+          '--disable-sync',
+          '--no-first-run',
+          '--no-zygote',
+          '--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints',
         ],
       },
     });
-    this.initializeClient();
+
+    this.initializeClientEvents(client);
+    return client;
   }
 
-  onModuleInit() {
-    this.client.initialize();
-  }
-
-  private initializeClient() {
-    this.client.on('qr', (qr) => {
+  private initializeClientEvents(client: Client) {
+    client.on('qr', (qr) => {
       this.logger.log('New QR Code generated');
       this.qrSubject.next({ qr });
     });
 
-    this.client.on('ready', () => {
+    client.on('ready', () => {
+      this.isReady = true;
       this.logger.log('WhatsApp Client is Ready!');
       this.statusSubject.next({ status: 'connected' });
     });
 
-    this.client.on('disconnected', () => {
+    client.on('auth_failure', (message) => {
+      this.isReady = false;
+      this.logger.error(`WhatsApp auth failure: ${message}`);
+      this.statusSubject.next({ status: 'auth_failure' });
+    });
+
+    client.on('disconnected', () => {
+      this.isReady = false;
       this.logger.warn('WhatsApp disconnected');
-      this.client.initialize();
+      this.statusSubject.next({ status: 'disconnected' });
+
+      if (
+        this.hasStartBeenRequested &&
+        process.env.WHATSAPP_AUTO_RECONNECT !== 'false'
+      ) {
+        setTimeout(() => {
+          void this.startClient('reconnect').catch(() => undefined);
+        }, 5000);
+      }
     });
   }
 
+  private async startClient(reason: string) {
+    this.hasStartBeenRequested = true;
+
+    if (this.isReady || this.client.info) {
+      return;
+    }
+
+    if (this.initPromise) {
+      return this.initPromise;
+    }
+
+    this.logger.log(`Starting WhatsApp client (${reason})...`);
+
+    this.initPromise = this.client
+      .initialize()
+      .then(() => undefined)
+      .catch(async (error) => {
+        this.isReady = false;
+        this.logger.error(
+          `WhatsApp client failed to start: ${error?.message || error}`,
+        );
+        this.statusSubject.next({ status: 'error' });
+
+        try {
+          await this.client.destroy();
+        } catch {
+          // The browser may not exist when Puppeteer fails during launch.
+        }
+
+        this.client = this.createClient();
+        throw error;
+      })
+      .finally(() => {
+        this.initPromise = null;
+      });
+
+    return this.initPromise;
+  }
+
+  private async ensureReady() {
+    if (!this.client.info) {
+      try {
+        await this.startClient('whatsapp-action');
+      } catch {
+        throw new BadRequestException(
+          'WhatsApp client could not start. Check Chromium/Puppeteer logs.',
+        );
+      }
+    }
+
+    if (!this.client.info) {
+      throw new BadRequestException('WhatsApp client not ready');
+    }
+  }
+
   getQrStream(): Observable<{ qr: string }> {
+    void this.startClient('qr-stream').catch(() => undefined);
     return this.qrSubject.asObservable();
   }
 
@@ -85,8 +187,10 @@ export class WhatsappService implements OnModuleInit {
   }
 
   async reload() {
+    this.isReady = false;
     await this.client.destroy();
-    await this.client.initialize();
+    this.client = this.createClient();
+    await this.startClient('reload');
   }
 
   private getChatId(phone: string): string {
@@ -101,6 +205,7 @@ export class WhatsappService implements OnModuleInit {
 
   // 👈 Accept optional requestId
   async sendText(phone: string, text: string, requestId?: string) {
+    await this.ensureReady();
     const chatId = this.getChatId(phone);
 
     const response = await this.client.sendMessage(chatId, text, {
@@ -113,7 +218,13 @@ export class WhatsappService implements OnModuleInit {
   }
 
   // 👈 Accept optional requestId
-  async sendMedia(phone: string, fileUrl: string, caption?: string, requestId?: string) {
+  async sendMedia(
+    phone: string,
+    fileUrl: string,
+    caption?: string,
+    requestId?: string,
+  ) {
+    await this.ensureReady();
     const chatId = this.getChatId(phone);
     const media = await MessageMedia.fromUrl(fileUrl);
     const response = await this.client.sendMessage(chatId, media, { caption });
@@ -130,9 +241,7 @@ export class WhatsappService implements OnModuleInit {
   }
 
   async broadcastByFilters(dto: BroadcastDto) {
-    if (!this.client.info) {
-      throw new BadRequestException('WhatsApp client not ready');
-    }
+    await this.ensureReady();
 
     const qb = this.requestRepository
       .createQueryBuilder('request')
@@ -220,7 +329,10 @@ export class WhatsappService implements OnModuleInit {
   }
 
   // 👈 Modified to prioritize requestId if provided
-  private async updateRequestStatusToContacted(phone: string, requestId?: string) {
+  private async updateRequestStatusToContacted(
+    phone: string,
+    requestId?: string,
+  ) {
     try {
       let targetRequest: PatientRequest | null = null;
 
@@ -229,18 +341,18 @@ export class WhatsappService implements OnModuleInit {
         targetRequest = await this.requestRepository.findOne({
           where: { id: requestId, status: RequestStatus.NEW },
         });
-      } 
+      }
       // Fallback: Use phone to find patient, then find the NEW request
       else {
         const patient = await this.patientRepository.findOne({
           where: { phone },
-          relations: ['requests'], 
+          relations: ['requests'],
         });
 
         if (patient && patient.requests.length > 0) {
-          targetRequest = patient.requests.find(
-            (req) => req.status === RequestStatus.NEW,
-          ) || null;
+          targetRequest =
+            patient.requests.find((req) => req.status === RequestStatus.NEW) ||
+            null;
         }
       }
 
