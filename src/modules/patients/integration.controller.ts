@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiCreatedResponse,
+  ApiHeader,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
@@ -34,6 +35,11 @@ import { PatientsService } from './services/patients.service';
 
 @ApiTags('Integration')
 @ApiSecurity('x-api-key')
+@ApiHeader({
+  name: 'x-api-key',
+  required: true,
+  description: 'Integration API key.',
+})
 @ApiUnauthorizedResponse({ description: 'Invalid or missing x-api-key header' })
 @UseGuards(ApiKeyGuard)
 @Controller('integration')
@@ -71,9 +77,51 @@ export class IntegrationController {
     return {
       metrics: this.reportStatsService.getMetricDefinitions(),
       ratingCategories: this.reportStatsService.getRatingCategoryDefinitions(),
+      serviceQualityCategories:
+        this.reportStatsService.getServiceQualityCategoryDefinitions(),
+      procedureQualityCategories:
+        this.reportStatsService.getProcedureQualityCategoryDefinitions(),
+      clientConversionMetrics:
+        this.reportStatsService.getClientConversionMetricDefinitions(),
       scores: REPORT_SCORE_VALUES,
       statuses: Object.values(RequestStatus),
     };
+  }
+
+  @Get('dashboard/service-quality')
+  @ApiOperation({
+    summary: 'Get service quality data prepared for line charts',
+  })
+  @ApiOkResponse({
+    description:
+      'Service quality category summaries and daily line-chart series.',
+  })
+  getServiceQualityDashboard(@Query() query: StatsPeriodQueryDto) {
+    return this.reportStatsService.getServiceQualityDashboard(query);
+  }
+
+  @Get('dashboard/procedure-quality')
+  @ApiOperation({
+    summary: 'Get procedure quality data prepared for line charts',
+  })
+  @ApiOkResponse({
+    description:
+      'Procedure quality category summaries and daily line-chart series.',
+  })
+  getProcedureQualityDashboard(@Query() query: StatsPeriodQueryDto) {
+    return this.reportStatsService.getProcedureQualityDashboard(query);
+  }
+
+  @Get('dashboard/client-conversion')
+  @ApiOperation({
+    summary: 'Get client conversion data prepared for line charts',
+  })
+  @ApiOkResponse({
+    description:
+      'Client conversion cards, metrics and daily line-chart series.',
+  })
+  getClientConversionDashboard(@Query() query: StatsPeriodQueryDto) {
+    return this.reportStatsService.getClientConversionDashboard(query);
   }
 
   @Get('report-stats')

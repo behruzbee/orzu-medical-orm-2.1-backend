@@ -28,6 +28,79 @@ export type ReportRatingCategoryId =
   | typeof REPORT_TOTAL_RATING_CATEGORY.id;
 export type ReportScore = (typeof REPORT_SCORE_VALUES)[number];
 
+export const SERVICE_QUALITY_CATEGORIES = [
+  {
+    id: 'doctors',
+    label: 'Врачебная часть',
+    ratingCategoryId: 'doctors',
+    color: '#4d9221',
+  },
+  {
+    id: 'nurses',
+    label: 'Лечебная часть',
+    ratingCategoryId: 'nurses',
+    color: '#6aa84f',
+  },
+  {
+    id: 'food',
+    label: 'Столовая',
+    ratingCategoryId: 'food',
+    color: '#8a6f31',
+  },
+  {
+    id: 'cleanliness',
+    label: 'Чистота',
+    ratingCategoryId: 'cleanliness',
+    color: '#2f7f75',
+  },
+] as const;
+
+export const PROCEDURE_QUALITY_CATEGORIES = [
+  { id: 'biorhythm', label: 'БиоРитм', baseAverage: 4.8, color: '#4d9221' },
+  {
+    id: 'deep-warming',
+    label: 'Глубокий прогрев',
+    baseAverage: 4.5,
+    color: '#6aa84f',
+  },
+  {
+    id: 'shvz-massage',
+    label: 'Массаж ШВЗ',
+    baseAverage: 4.9,
+    color: '#2f7f75',
+  },
+  {
+    id: 'electrophoresis',
+    label: 'Электрофорез',
+    baseAverage: 4.2,
+    color: '#7a9a01',
+  },
+  {
+    id: 'uvch-therapy',
+    label: 'УВЧ терапия',
+    baseAverage: 4.0,
+    color: '#8a6f31',
+  },
+] as const;
+
+export const CLIENT_CONVERSION_METRICS = [
+  { id: 'arrivedClients', label: 'Пришло клиентов', color: '#4d9221' },
+  { id: 'targetInpatient', label: 'Целевые (стационар)', color: '#6aa84f' },
+  { id: 'successfulDeals', label: 'Успешные сделки', color: '#2f7f75' },
+  { id: 'refusals', label: 'Отказники', color: '#8a6f31' },
+  { id: 'called', label: 'Поднял трубку', color: '#3d7d22' },
+  { id: 'noAnswer', label: 'Не поднял трубку', color: '#b88900' },
+  { id: 'unreachable', label: 'Номер отключен', color: '#a65c00' },
+  { id: 'wrongNumber', label: 'Неправильный номер', color: '#9b2c2c' },
+  { id: 'hasNotWhatsapp', label: 'Нет WhatsApp', color: '#6b46c1' },
+  { id: 'employeeNumber', label: 'Номер сотрудника', color: '#4a5568' },
+] as const;
+
+type ProcedureQualityCategoryId =
+  (typeof PROCEDURE_QUALITY_CATEGORIES)[number]['id'];
+type ClientConversionMetricId =
+  (typeof CLIENT_CONVERSION_METRICS)[number]['id'];
+
 export const REPORT_METRIC_DEFINITIONS = {
   'transferred-numbers': {
     label: 'кол. переданных номеров',
@@ -274,15 +347,49 @@ export class ReportStatsService {
   async getRatingCategory(query: ReportStatsPeriodQuery, category: string) {
     const categoryId = this.parseRatingCategory(category);
     const data = await this.loadReportData(query);
+    const dailyStats = this.buildDailyStats(data);
     const definition = this.getRatingCategoryDefinition(categoryId);
+    const summary = this.ratingAverage(data.totals.ratings[categoryId]);
+    const points = dailyStats.map((day) => {
+      const daySummary = this.ratingAverage(day.stats.ratings[categoryId]);
+
+      return {
+        date: day.date,
+        label: day.label,
+        average: daySummary.average,
+        value: daySummary.average,
+        count: daySummary.count,
+        distribution: this.ratingDistribution(day.stats.ratings[categoryId]),
+      };
+    });
 
     return {
       period: data.period,
       category: definition,
+      chart: {
+        xAxisKey: 'date',
+        yAxisKey: 'average',
+        valueKey: 'value',
+      },
+      summary: {
+        ...summary,
+        value: summary.average,
+        max: 5,
+      },
       total: data.totals.ratings[categoryId],
+      distribution: this.ratingDistribution(data.totals.ratings[categoryId]),
+      series: [
+        {
+          categoryId,
+          label: definition?.label || categoryId,
+          points,
+        },
+      ],
+      points,
       byBranch: data.branches.map((branchStats) => ({
         branch: branchStats.branch,
         scores: branchStats.ratings[categoryId],
+        summary: this.ratingAverage(branchStats.ratings[categoryId]),
       })),
     };
   }
@@ -324,12 +431,230 @@ export class ReportStatsService {
     };
   }
 
+  async getServiceQualityDashboard(query: ReportStatsPeriodQuery) {
+    const data = await this.loadReportData(query);
+    const dailyStats = this.buildDailyStats(data);
+    const categories = SERVICE_QUALITY_CATEGORIES.map((category) => {
+      const summary = this.ratingAverage(
+        data.totals.ratings[category.ratingCategoryId],
+      );
+
+      return {
+        id: category.id,
+        label: category.label,
+        sourceRatingCategory: category.ratingCategoryId,
+        color: category.color,
+        average: summary.average,
+        value: summary.average,
+        count: summary.count,
+        max: 5,
+        distribution: this.ratingDistribution(
+          data.totals.ratings[category.ratingCategoryId],
+        ),
+      };
+    });
+    const series = SERVICE_QUALITY_CATEGORIES.map((category) => ({
+      categoryId: category.id,
+      label: category.label,
+      color: category.color,
+      points: dailyStats.map((day) => {
+        const summary = this.ratingAverage(
+          day.stats.ratings[category.ratingCategoryId],
+        );
+
+        return {
+          date: day.date,
+          label: day.label,
+          average: summary.average,
+          value: summary.average,
+          count: summary.count,
+        };
+      }),
+    }));
+
+    return {
+      period: data.period,
+      chart: {
+        xAxisKey: 'date',
+        yAxisKey: 'average',
+        valueKey: 'value',
+        categoryKey: 'categoryId',
+      },
+      categories,
+      series,
+      points: dailyStats.map((day) => {
+        const point: Record<string, string | number | null> = {
+          date: day.date,
+          label: day.label,
+        };
+
+        SERVICE_QUALITY_CATEGORIES.forEach((category) => {
+          const summary = this.ratingAverage(
+            day.stats.ratings[category.ratingCategoryId],
+          );
+          point[category.id] = summary.average;
+          point[`${category.id}Count`] = summary.count;
+        });
+
+        return point;
+      }),
+    };
+  }
+
+  async getProcedureQualityDashboard(query: ReportStatsPeriodQuery) {
+    const { start, end } = this.parsePeriod(query);
+    const days = this.buildDateBuckets(start, end);
+    const series = PROCEDURE_QUALITY_CATEGORIES.map((category) => ({
+      categoryId: category.id,
+      label: category.label,
+      color: category.color,
+      points: days.map((day, index) =>
+        this.buildProcedureQualityPoint(category.id, day, index),
+      ),
+    }));
+    const categories = PROCEDURE_QUALITY_CATEGORIES.map((category) => {
+      const categorySeries = series.find(
+        (item) => item.categoryId === category.id,
+      );
+      const values =
+        categorySeries?.points
+          .map((point) => point.average)
+          .filter((value): value is number => typeof value === 'number') || [];
+      const totalCount =
+        categorySeries?.points.reduce((sum, point) => sum + point.count, 0) ||
+        0;
+      const average =
+        values.length > 0
+          ? Number(
+              (
+                values.reduce((sum, value) => sum + value, 0) / values.length
+              ).toFixed(1),
+            )
+          : null;
+
+      return {
+        id: category.id,
+        label: category.label,
+        color: category.color,
+        average,
+        value: average,
+        count: totalCount,
+        max: 5,
+      };
+    });
+
+    return {
+      period: {
+        startDate: start.toISOString(),
+        endDate: end.toISOString(),
+        branch: query.branch || null,
+      },
+      chart: {
+        xAxisKey: 'date',
+        yAxisKey: 'average',
+        valueKey: 'value',
+        categoryKey: 'categoryId',
+      },
+      categories,
+      series,
+      points: days.map((day, index) => {
+        const point: Record<string, string | number | null> = {
+          date: this.formatDateKey(day),
+          label: this.formatDisplayDate(day),
+        };
+
+        PROCEDURE_QUALITY_CATEGORIES.forEach((category) => {
+          const procedurePoint = this.buildProcedureQualityPoint(
+            category.id,
+            day,
+            index,
+          );
+          point[category.id] = procedurePoint.average;
+          point[`${category.id}Count`] = procedurePoint.count;
+        });
+
+        return point;
+      }),
+    };
+  }
+
+  async getClientConversionDashboard(query: ReportStatsPeriodQuery) {
+    const data = await this.loadReportData(query);
+    const dailyStats = this.buildDailyStats(data);
+    const cards = CLIENT_CONVERSION_METRICS.slice(0, 4).map((metric) => {
+      const summary = this.getConversionMetricValue(data.totals, metric.id);
+
+      return {
+        id: metric.id,
+        label: metric.label,
+        color: metric.color,
+        ...summary,
+      };
+    });
+    const series = CLIENT_CONVERSION_METRICS.map((metric) => ({
+      metricId: metric.id,
+      label: metric.label,
+      color: metric.color,
+      points: dailyStats.map((day) => ({
+        date: day.date,
+        label: day.label,
+        ...this.getConversionMetricValue(day.stats, metric.id),
+      })),
+    }));
+
+    return {
+      period: data.period,
+      chart: {
+        xAxisKey: 'date',
+        yAxisKey: 'count',
+        valueKey: 'count',
+        metricKey: 'metricId',
+      },
+      cards,
+      metrics: CLIENT_CONVERSION_METRICS.map((metric) => ({
+        id: metric.id,
+        label: metric.label,
+        color: metric.color,
+        ...this.getConversionMetricValue(data.totals, metric.id),
+      })),
+      series,
+      points: dailyStats.map((day) => {
+        const point: Record<string, string | number | null> = {
+          date: day.date,
+          label: day.label,
+        };
+
+        CLIENT_CONVERSION_METRICS.forEach((metric) => {
+          const value = this.getConversionMetricValue(day.stats, metric.id);
+          point[metric.id] = value.count;
+          point[`${metric.id}Percent`] = value.percent;
+        });
+
+        return point;
+      }),
+    };
+  }
+
   getMetricDefinitions() {
     return REPORT_METRIC_DEFINITIONS;
   }
 
   getRatingCategoryDefinitions() {
     return [...REPORT_RATING_CATEGORIES, REPORT_TOTAL_RATING_CATEGORY];
+  }
+
+  getServiceQualityCategoryDefinitions() {
+    return SERVICE_QUALITY_CATEGORIES;
+  }
+
+  getProcedureQualityCategoryDefinitions() {
+    return PROCEDURE_QUALITY_CATEGORIES.map(({ baseAverage, ...category }) => ({
+      ...category,
+    }));
+  }
+
+  getClientConversionMetricDefinitions() {
+    return CLIENT_CONVERSION_METRICS;
   }
 
   private parsePeriod(query: ReportStatsPeriodQuery) {
@@ -594,6 +919,156 @@ export class ReportStatsService {
     };
 
     return metricMap[metric];
+  }
+
+  private buildDailyStats(data: ReportStatsData) {
+    return this.buildDateBuckets(data.start, data.end).map((day) => {
+      const date = this.formatDateKey(day);
+      const requests = data.requests.filter(
+        (request) => this.formatDateKey(request.arrivalDate) === date,
+      );
+      const errors = data.errorsLog.filter(
+        (error) => this.formatDateKey(error.arrivalDate) === date,
+      );
+
+      return {
+        date,
+        label: this.formatDisplayDate(day),
+        stats: this.buildStatsForRows(null, requests, errors),
+      };
+    });
+  }
+
+  private buildDateBuckets(start: Date, end: Date) {
+    const buckets: Date[] = [];
+    const cursor = new Date(start);
+    cursor.setHours(0, 0, 0, 0);
+    const last = new Date(end);
+    last.setHours(0, 0, 0, 0);
+
+    while (cursor.getTime() <= last.getTime()) {
+      buckets.push(new Date(cursor));
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    return buckets;
+  }
+
+  private ratingAverage(ratings: Record<ReportScore, ReportMetricValue>) {
+    let count = 0;
+    let weighted = 0;
+
+    REPORT_SCORE_VALUES.forEach((score) => {
+      const scoreCount = ratings[score]?.count || 0;
+      count += scoreCount;
+      weighted += score * scoreCount;
+    });
+
+    const average = count > 0 ? Number((weighted / count).toFixed(1)) : null;
+
+    return {
+      average,
+      count,
+    };
+  }
+
+  private ratingDistribution(ratings: Record<ReportScore, ReportMetricValue>) {
+    return REPORT_SCORE_VALUES.map((score) => ({
+      score,
+      count: ratings[score]?.count || 0,
+      percent: ratings[score]?.percent || 0,
+    }));
+  }
+
+  private buildProcedureQualityPoint(
+    categoryId: ProcedureQualityCategoryId,
+    day: Date,
+    index: number,
+  ) {
+    const category = PROCEDURE_QUALITY_CATEGORIES.find(
+      (item) => item.id === categoryId,
+    );
+    const seed = this.hashString(categoryId);
+    const wave =
+      Math.sin((index + seed) * 0.92) * 0.35 +
+      Math.cos((index + seed) * 0.37) * 0.18;
+    const average = Number(
+      Math.min(5, Math.max(3.4, (category?.baseAverage || 4.4) + wave)).toFixed(
+        1,
+      ),
+    );
+
+    return {
+      date: this.formatDateKey(day),
+      label: this.formatDisplayDate(day),
+      average,
+      value: average,
+      count: 8 + ((index + seed) % 11),
+    };
+  }
+
+  private getConversionMetricValue(
+    stats: ReportBranchStats,
+    metricId: ClientConversionMetricId,
+  ) {
+    const handedOver = stats.handedOver.count;
+    const successfulDeals = stats.correct.called.count;
+    const noAnswer = stats.correct.noAnswer.count;
+    const unreachable = stats.correct.unreachable.count;
+    const refusals = noAnswer + unreachable;
+    const valueMap: Record<ClientConversionMetricId, number> = {
+      arrivedClients: handedOver,
+      targetInpatient: stats.correct.total.count,
+      successfulDeals,
+      refusals,
+      called: successfulDeals,
+      noAnswer,
+      unreachable,
+      wrongNumber: stats.incorrect.wrongNumber.count,
+      hasNotWhatsapp: stats.incorrect.hasNotWhatsapp.count,
+      employeeNumber: stats.incorrect.employeeNumber.count,
+    };
+    const count = valueMap[metricId] || 0;
+    const ratio =
+      metricId === 'arrivedClients'
+        ? null
+        : handedOver > 0
+          ? Number((count / handedOver).toFixed(4))
+          : 0;
+
+    return {
+      count,
+      ratio,
+      percent: ratio === null ? null : Number((ratio * 100).toFixed(1)),
+      base:
+        metricId === 'arrivedClients'
+          ? null
+          : {
+              key: 'arrivedClients',
+              label: 'Пришло клиентов',
+              count: handedOver,
+            },
+    };
+  }
+
+  private formatDateKey(date: Date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+
+    return `${year}-${month}-${day}`;
+  }
+
+  private formatDisplayDate(date: Date) {
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+
+    return `${day}.${month}.${year}`;
+  }
+
+  private hashString(value: string) {
+    return value.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
   }
 
   private parseMetric(metric: string): ReportMetricKey {

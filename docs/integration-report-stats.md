@@ -93,6 +93,66 @@ GET /integration/report-stats/catalog
 x-api-key: YOUR_INTEGRATION_KEY
 ```
 
+## Endpoints для dashboard / line chart
+
+Эти endpoints сразу подготовлены для интерфейса: если выбран месяц, в `points` и `series[].points` будут строки по дням.
+
+Качество обслуживания:
+
+```http
+GET /integration/dashboard/service-quality?startDate=2026-06-01&endDate=2026-06-30
+x-api-key: YOUR_INTEGRATION_KEY
+```
+
+Качество процедур:
+
+```http
+GET /integration/dashboard/procedure-quality?startDate=2026-06-01&endDate=2026-06-30
+x-api-key: YOUR_INTEGRATION_KEY
+```
+
+Конверсия клиентов:
+
+```http
+GET /integration/dashboard/client-conversion?startDate=2026-06-01&endDate=2026-06-30
+x-api-key: YOUR_INTEGRATION_KEY
+```
+
+Общий формат для графика:
+
+```json
+{
+  "chart": {
+    "xAxisKey": "date",
+    "yAxisKey": "average",
+    "valueKey": "value"
+  },
+  "categories": [],
+  "series": [
+    {
+      "categoryId": "doctors",
+      "label": "Врачебная часть",
+      "points": [
+        {
+          "date": "2026-06-01",
+          "label": "01.06.2026",
+          "value": 4.8,
+          "average": 4.8,
+          "count": 6
+        }
+      ]
+    }
+  ],
+  "points": []
+}
+```
+
+Подробная привязка блоков интерфейса описана в:
+
+```text
+docs/dashboard-interface-endpoints.md
+```
+
 ## Отдельные endpoints по колонкам отчета
 
 Количество переданных номеров:
@@ -223,6 +283,13 @@ x-api-key: YOUR_INTEGRATION_KEY
   "byBranch": []
 }
 ```
+
+Этот же endpoint теперь возвращает поля для line chart:
+
+- `summary.average` / `summary.value` - средняя оценка за период.
+- `distribution` - распределение оценок `5/4/3/2`.
+- `series[0].points` - точки по дням.
+- `points` - те же точки в плоском виде.
 
 ## Статусы заявок
 
