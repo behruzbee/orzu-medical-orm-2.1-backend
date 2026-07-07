@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Between, FindOptionsWhere, In, Not, Repository } from 'typeorm';
 
 import { RequestStatus } from 'src/common/enums/request-status.enum';
+import { formatBranchName } from 'src/common/utils/branch.util';
 import { ImportErrorLog } from 'src/modules/patients/entities/import-error-log.entity';
 import { PatientRequest } from 'src/modules/patients/entities/patient_requests.entity';
 
@@ -310,7 +311,7 @@ export class ReportStatsService {
       period: {
         startDate: start.toISOString(),
         endDate: end.toISOString(),
-        branch: query.branch || null,
+        branch: formatBranchName(query.branch),
       },
       start,
       end,
@@ -547,7 +548,7 @@ export class ReportStatsService {
       period: {
         startDate: start.toISOString(),
         endDate: end.toISOString(),
-        branch: query.branch || null,
+        branch: formatBranchName(query.branch),
       },
       chart: {
         xAxisKey: 'date',
@@ -711,7 +712,7 @@ export class ReportStatsService {
     );
 
     return {
-      branch,
+      branch: formatBranchName(branch),
       handedOver: this.metric(handedOver),
       incorrect: {
         wrongNumber: this.metric(wrongNumberTotal),

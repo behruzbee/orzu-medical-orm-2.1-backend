@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, FindOptionsWhere, In, Not, Repository } from 'typeorm';
 import { RequestStatus } from 'src/common/enums/request-status.enum'; // Исправлено на RequestStatus
+import { formatBranchName } from 'src/common/utils/branch.util';
 import { PatientRequest } from '../entities/patient_requests.entity'; // Используем PatientRequest вместо Patient
 import { ImportErrorLog } from '../entities/import-error-log.entity';
 import { StatsPeriodQueryDto } from '../dto/stats-period-query.dto';
@@ -113,11 +114,11 @@ export class PatientsStatsService {
       period: {
         startDate: start.toISOString(),
         endDate: end.toISOString(),
-        branch: query.branch || null,
+        branch: formatBranchName(query.branch),
       },
       totals: this.buildPeriodSummary(requests, errors),
       byBranch: branches.map((branch) => ({
-        branch,
+        branch: formatBranchName(branch),
         ...this.buildPeriodSummary(
           requests.filter((request) => request.branch === branch),
           errors.filter((error) => error.branch === branch),
@@ -146,7 +147,7 @@ export class PatientsStatsService {
       period: {
         startDate: start.toISOString(),
         endDate: end.toISOString(),
-        branch: query.branch || null,
+        branch: formatBranchName(query.branch),
       },
       status,
       label: STATUS_LABELS[status],
