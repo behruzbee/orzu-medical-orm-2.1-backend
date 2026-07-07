@@ -10,6 +10,7 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { TrelloModule } from './modules/trello/trello.module';
 import { TelegramModule } from './modules/telegram/telegram.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { DoctorMessagesModule } from './modules/doctor-messages/doctor-messages.module';
 
 @Module({
   imports: [
@@ -26,7 +27,8 @@ import { ScheduleModule } from '@nestjs/schedule';
     PatientsModule,
     ReportsModule,
     TrelloModule,
-    TelegramModule
+    TelegramModule,
+    DoctorMessagesModule,
   ],
   controllers: [],
   providers: [],
