@@ -46,7 +46,7 @@ endDate=2026-06-30
 branch=Orzu Medical Chilonzor   optional
 ```
 
-Если выбрать месяц, backend вернет `points` по дням этого месяца.
+Если выбрать месяц или короткий период, backend вернет `points` по дням. Для длинных периодов, например "за все время", backend вернет точки по месяцам, чтобы графики не тормозили. Текущий шаг указан в `chart.granularity`: `day` или `month`.
 
 ## Качество обслуживания
 
@@ -62,6 +62,7 @@ GET /integration/dashboard/service-quality?startDate=2026-06-01&endDate=2026-06-
 - Список категорий справа: `categories`.
 - Активная категория: `categories[0].id` или выбранная пользователем.
 - Line chart выбранной категории: найти объект в `series`, где `categoryId === selectedCategoryId`, и взять `points`.
+- Шаг графика: `chart.granularity`.
 - X-axis: `point.label` или `point.date`.
 - Y-axis: `point.value` или `point.average`.
 - Оценка справа: `category.value`.
@@ -147,6 +148,7 @@ GET /integration/dashboard/procedure-quality?startDate=2026-06-01&endDate=2026-0
 - Список процедур справа: `categories`.
 - Активная процедура: `categories[0].id` или выбранная пользователем.
 - Line chart выбранной процедуры: найти объект в `series`, где `categoryId === selectedProcedureId`, и взять `points`.
+- Шаг графика: `chart.granularity`.
 - X-axis: `point.label` или `point.date`.
 - Y-axis: `point.value` или `point.average`.
 - Оценка справа: `category.value`.
@@ -176,6 +178,7 @@ GET /integration/dashboard/client-conversion?startDate=2026-06-01&endDate=2026-0
 - Карточки справа: `cards`.
 - Активная метрика для line chart: `cards[0].id` или выбранная пользователем.
 - Line chart выбранной метрики: найти объект в `series`, где `metricId === selectedMetricId`, и взять `points`.
+- Шаг графика: `chart.granularity`.
 - X-axis: `point.label` или `point.date`.
 - Y-axis: `point.count`.
 - Значение карточки: `card.count`.

@@ -3,6 +3,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   ManyToOne,
   OneToOne,
   PrimaryGeneratedColumn,
@@ -14,6 +15,11 @@ import { Patient } from './patient.entity';
 import { CallStatus } from 'src/modules/call-history/entities/call-status.entity';
 import { Feedback } from 'src/modules/feedbacks/entities/feedback.entity'; // Пример пути
 
+@Index('idx_patient_requests_arrival_status_branch', [
+  'arrivalDate',
+  'status',
+  'branch',
+])
 @Entity('patient_requests')
 export class PatientRequest {
   @PrimaryGeneratedColumn('uuid')

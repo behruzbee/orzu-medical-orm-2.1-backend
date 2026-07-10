@@ -4,12 +4,14 @@ import {
   PrimaryGeneratedColumn,
   CreateDateColumn,
   OneToMany,
+  Index,
   JoinColumn,
   OneToOne,
 } from 'typeorm';
 import { EvidenceMessage } from './evidence-message.entity';
 import { PatientRequest } from 'src/modules/patients/entities/patient_requests.entity';
 
+@Index('idx_feedbacks_request_id', ['requestId'])
 @Entity('feedbacks')
 export class Feedback {
   @PrimaryGeneratedColumn('uuid')

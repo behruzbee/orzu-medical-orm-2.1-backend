@@ -94,7 +94,7 @@ export class IntegrationController {
   })
   @ApiOkResponse({
     description:
-      'Service quality category summaries and daily line-chart series.',
+      'Service quality category summaries and bucketed line-chart series.',
   })
   getServiceQualityDashboard(@Query() query: StatsPeriodQueryDto) {
     return this.reportStatsService.getServiceQualityDashboard(query);
@@ -106,7 +106,7 @@ export class IntegrationController {
   })
   @ApiOkResponse({
     description:
-      'Procedure quality category summaries and daily line-chart series.',
+      'Procedure quality category summaries and bucketed line-chart series.',
   })
   getProcedureQualityDashboard(@Query() query: StatsPeriodQueryDto) {
     return this.reportStatsService.getProcedureQualityDashboard(query);
@@ -118,7 +118,7 @@ export class IntegrationController {
   })
   @ApiOkResponse({
     description:
-      'Client conversion cards, metrics and daily line-chart series.',
+      'Client conversion cards, metrics and bucketed line-chart series.',
   })
   getClientConversionDashboard(@Query() query: StatsPeriodQueryDto) {
     return this.reportStatsService.getClientConversionDashboard(query);

@@ -227,6 +227,43 @@ export interface ReportStatsData {
   totals: ReportBranchStats;
 }
 
+type DashboardGranularity = 'day' | 'month';
+
+interface DashboardBucket {
+  key: string;
+  date: string;
+  label: string;
+  anchorDate: Date;
+}
+
+interface DashboardBucketStats {
+  date: string;
+  label: string;
+  stats: ReportBranchStats;
+}
+
+interface DashboardAggregate {
+  requestCount: number;
+  errorCount: number;
+  duplicateErrors: number;
+  statusCounts: Record<RequestStatus, number>;
+  ratingCounts: Record<ReportRatingCategoryId, Record<ReportScore, number>>;
+}
+
+interface DashboardStatusAggregateRow {
+  bucket: string;
+  status: RequestStatus;
+  count: string | number;
+}
+
+interface DashboardErrorAggregateRow {
+  bucket: string;
+  category: string;
+  count: string | number;
+}
+
+type DashboardRatingAggregateRow = Record<string, string | number | null>;
+
 const ACTIVE_STATUSES = [RequestStatus.NEW, RequestStatus.CONTACTED];
 const SUCCESS_STATUSES = [
   RequestStatus.ALL_OK,
@@ -234,6 +271,8 @@ const SUCCESS_STATUSES = [
   RequestStatus.FEEDBACK_NEGATIVE,
   RequestStatus.FEEDBACK_NOT_RELATED,
 ];
+const DASHBOARD_DAILY_BUCKET_LIMIT = 93;
+const MS_IN_DAY = 24 * 60 * 60 * 1000;
 
 const STATUS_LABELS: Record<RequestStatus, string> = {
   [RequestStatus.NEW]: 'Новые',
@@ -321,6 +360,193 @@ export class ReportStatsService {
       branches,
       totals: this.buildStatsForRows(null, requests, errorsLog),
     };
+  }
+
+  private async loadDashboardAggregateStats(
+    query: ReportStatsPeriodQuery,
+    options: { includeRatings?: boolean } = {},
+  ) {
+    const { start, end } = this.parsePeriod(query);
+    const bucketData = this.buildDashboardBuckets(start, end);
+    const bucketAggregates = new Map<string, DashboardAggregate>();
+    const totals = this.createDashboardAggregate();
+
+    bucketData.buckets.forEach((bucket) => {
+      bucketAggregates.set(bucket.key, this.createDashboardAggregate());
+    });
+
+    const [statusRows, errorRows, ratingRows] = await Promise.all([
+      this.getDashboardStatusRows(query, start, end, bucketData.granularity),
+      this.getDashboardErrorRows(query, start, end, bucketData.granularity),
+      options.includeRatings
+        ? this.getDashboardRatingRows(query, start, end, bucketData.granularity)
+        : Promise.resolve([] as DashboardRatingAggregateRow[]),
+    ]);
+
+    statusRows.forEach((row) => {
+      const count = this.toCount(row.count);
+      const bucketAggregate = this.getDashboardAggregate(
+        bucketAggregates,
+        row.bucket,
+      );
+
+      this.addStatusCount(bucketAggregate, row.status, count);
+      this.addStatusCount(totals, row.status, count);
+    });
+
+    errorRows.forEach((row) => {
+      const count = this.toCount(row.count);
+      const bucketAggregate = this.getDashboardAggregate(
+        bucketAggregates,
+        row.bucket,
+      );
+
+      this.addErrorCount(bucketAggregate, row.category, count);
+      this.addErrorCount(totals, row.category, count);
+    });
+
+    ratingRows.forEach((row) => {
+      const bucketKey = String(row.bucket || '');
+      const bucketAggregate = this.getDashboardAggregate(
+        bucketAggregates,
+        bucketKey,
+      );
+
+      this.addRatingCounts(bucketAggregate, row);
+      this.addRatingCounts(totals, row);
+    });
+
+    return {
+      period: {
+        startDate: start.toISOString(),
+        endDate: end.toISOString(),
+        branch: formatBranchName(query.branch),
+      },
+      start,
+      end,
+      granularity: bucketData.granularity,
+      bucketStats: bucketData.buckets.map(
+        (bucket): DashboardBucketStats => ({
+          date: bucket.date,
+          label: bucket.label,
+          stats: this.buildStatsFromAggregate(
+            null,
+            bucketAggregates.get(bucket.key) || this.createDashboardAggregate(),
+          ),
+        }),
+      ),
+      totals: this.buildStatsFromAggregate(null, totals),
+    };
+  }
+
+  private getDashboardStatusRows(
+    query: ReportStatsPeriodQuery,
+    start: Date,
+    end: Date,
+    granularity: DashboardGranularity,
+  ) {
+    const bucketSql = this.dashboardBucketSql('patient_request', granularity);
+    const qb = this.requestRepository
+      .createQueryBuilder('patient_request')
+      .select(bucketSql, 'bucket')
+      .addSelect('patient_request."status"', 'status')
+      .addSelect('COUNT(*)', 'count')
+      .where('patient_request."arrivalDate" BETWEEN :start AND :end', {
+        start,
+        end,
+      })
+      .andWhere('patient_request."status" NOT IN (:...activeStatuses)', {
+        activeStatuses: ACTIVE_STATUSES,
+      })
+      .groupBy(bucketSql)
+      .addGroupBy('patient_request."status"');
+
+    if (query.branch) {
+      qb.andWhere('patient_request."branch" = :branch', {
+        branch: query.branch,
+      });
+    }
+
+    return qb.getRawMany<DashboardStatusAggregateRow>();
+  }
+
+  private getDashboardErrorRows(
+    query: ReportStatsPeriodQuery,
+    start: Date,
+    end: Date,
+    granularity: DashboardGranularity,
+  ) {
+    const bucketSql = this.dashboardBucketSql('import_error', granularity);
+    const qb = this.errorLogRepository
+      .createQueryBuilder('import_error')
+      .select(bucketSql, 'bucket')
+      .addSelect('import_error."category"', 'category')
+      .addSelect('COUNT(*)', 'count')
+      .where('import_error."arrivalDate" BETWEEN :start AND :end', {
+        start,
+        end,
+      })
+      .groupBy(bucketSql)
+      .addGroupBy('import_error."category"');
+
+    if (query.branch) {
+      qb.andWhere('import_error."branch" = :branch', {
+        branch: query.branch,
+      });
+    }
+
+    return qb.getRawMany<DashboardErrorAggregateRow>();
+  }
+
+  private getDashboardRatingRows(
+    query: ReportStatsPeriodQuery,
+    start: Date,
+    end: Date,
+    granularity: DashboardGranularity,
+  ) {
+    const bucketSql = this.dashboardBucketSql('patient_request', granularity);
+    const categoryScoreSqls = REPORT_RATING_CATEGORIES.map((category) =>
+      this.ratingScoreSql(category.id),
+    );
+    const totalScoreSql = `LEAST(${categoryScoreSqls.join(', ')})`;
+    const qb = this.requestRepository
+      .createQueryBuilder('patient_request')
+      .leftJoin('patient_request.feedback', 'feedback')
+      .select(bucketSql, 'bucket')
+      .where('patient_request."arrivalDate" BETWEEN :start AND :end', {
+        start,
+        end,
+      })
+      .andWhere('patient_request."status" IN (:...successStatuses)', {
+        successStatuses: SUCCESS_STATUSES,
+      })
+      .groupBy(bucketSql);
+
+    REPORT_RATING_CATEGORIES.forEach((category, index) => {
+      const scoreSql = categoryScoreSqls[index];
+
+      REPORT_SCORE_VALUES.forEach((score) => {
+        qb.addSelect(
+          `COALESCE(SUM(CASE WHEN ${scoreSql} = ${score} THEN 1 ELSE 0 END), 0)`,
+          `${category.id}_${score}`,
+        );
+      });
+    });
+
+    REPORT_SCORE_VALUES.forEach((score) => {
+      qb.addSelect(
+        `COALESCE(SUM(CASE WHEN ${totalScoreSql} = ${score} THEN 1 ELSE 0 END), 0)`,
+        `total_${score}`,
+      );
+    });
+
+    if (query.branch) {
+      qb.andWhere('patient_request."branch" = :branch', {
+        branch: query.branch,
+      });
+    }
+
+    return qb.getRawMany<DashboardRatingAggregateRow>();
   }
 
   async getReportStats(query: ReportStatsPeriodQuery) {
@@ -433,8 +659,10 @@ export class ReportStatsService {
   }
 
   async getServiceQualityDashboard(query: ReportStatsPeriodQuery) {
-    const data = await this.loadReportData(query);
-    const dailyStats = this.buildDailyStats(data);
+    const data = await this.loadDashboardAggregateStats(query, {
+      includeRatings: true,
+    });
+    const bucketStats = data.bucketStats;
     const categories = SERVICE_QUALITY_CATEGORIES.map((category) => {
       const summary = this.ratingAverage(
         data.totals.ratings[category.ratingCategoryId],
@@ -458,14 +686,14 @@ export class ReportStatsService {
       categoryId: category.id,
       label: category.label,
       color: category.color,
-      points: dailyStats.map((day) => {
+      points: bucketStats.map((bucket) => {
         const summary = this.ratingAverage(
-          day.stats.ratings[category.ratingCategoryId],
+          bucket.stats.ratings[category.ratingCategoryId],
         );
 
         return {
-          date: day.date,
-          label: day.label,
+          date: bucket.date,
+          label: bucket.label,
           average: summary.average,
           value: summary.average,
           count: summary.count,
@@ -480,18 +708,19 @@ export class ReportStatsService {
         yAxisKey: 'average',
         valueKey: 'value',
         categoryKey: 'categoryId',
+        granularity: data.granularity,
       },
       categories,
       series,
-      points: dailyStats.map((day) => {
+      points: bucketStats.map((bucket) => {
         const point: Record<string, string | number | null> = {
-          date: day.date,
-          label: day.label,
+          date: bucket.date,
+          label: bucket.label,
         };
 
         SERVICE_QUALITY_CATEGORIES.forEach((category) => {
           const summary = this.ratingAverage(
-            day.stats.ratings[category.ratingCategoryId],
+            bucket.stats.ratings[category.ratingCategoryId],
           );
           point[category.id] = summary.average;
           point[`${category.id}Count`] = summary.count;
@@ -504,13 +733,14 @@ export class ReportStatsService {
 
   async getProcedureQualityDashboard(query: ReportStatsPeriodQuery) {
     const { start, end } = this.parsePeriod(query);
-    const days = this.buildDateBuckets(start, end);
+    const bucketData = this.buildDashboardBuckets(start, end);
+    const buckets = bucketData.buckets;
     const series = PROCEDURE_QUALITY_CATEGORIES.map((category) => ({
       categoryId: category.id,
       label: category.label,
       color: category.color,
-      points: days.map((day, index) =>
-        this.buildProcedureQualityPoint(category.id, day, index),
+      points: buckets.map((bucket, index) =>
+        this.buildProcedureQualityPoint(category.id, bucket, index),
       ),
     }));
     const categories = PROCEDURE_QUALITY_CATEGORIES.map((category) => {
@@ -555,19 +785,20 @@ export class ReportStatsService {
         yAxisKey: 'average',
         valueKey: 'value',
         categoryKey: 'categoryId',
+        granularity: bucketData.granularity,
       },
       categories,
       series,
-      points: days.map((day, index) => {
+      points: buckets.map((bucket, index) => {
         const point: Record<string, string | number | null> = {
-          date: this.formatDateKey(day),
-          label: this.formatDisplayDate(day),
+          date: bucket.date,
+          label: bucket.label,
         };
 
         PROCEDURE_QUALITY_CATEGORIES.forEach((category) => {
           const procedurePoint = this.buildProcedureQualityPoint(
             category.id,
-            day,
+            bucket,
             index,
           );
           point[category.id] = procedurePoint.average;
@@ -580,8 +811,8 @@ export class ReportStatsService {
   }
 
   async getClientConversionDashboard(query: ReportStatsPeriodQuery) {
-    const data = await this.loadReportData(query);
-    const dailyStats = this.buildDailyStats(data);
+    const data = await this.loadDashboardAggregateStats(query);
+    const bucketStats = data.bucketStats;
     const cards = CLIENT_CONVERSION_METRICS.slice(0, 4).map((metric) => {
       const summary = this.getConversionMetricValue(data.totals, metric.id);
 
@@ -596,10 +827,10 @@ export class ReportStatsService {
       metricId: metric.id,
       label: metric.label,
       color: metric.color,
-      points: dailyStats.map((day) => ({
-        date: day.date,
-        label: day.label,
-        ...this.getConversionMetricValue(day.stats, metric.id),
+      points: bucketStats.map((bucket) => ({
+        date: bucket.date,
+        label: bucket.label,
+        ...this.getConversionMetricValue(bucket.stats, metric.id),
       })),
     }));
 
@@ -610,6 +841,7 @@ export class ReportStatsService {
         yAxisKey: 'count',
         valueKey: 'count',
         metricKey: 'metricId',
+        granularity: data.granularity,
       },
       cards,
       metrics: CLIENT_CONVERSION_METRICS.map((metric) => ({
@@ -619,14 +851,14 @@ export class ReportStatsService {
         ...this.getConversionMetricValue(data.totals, metric.id),
       })),
       series,
-      points: dailyStats.map((day) => {
+      points: bucketStats.map((bucket) => {
         const point: Record<string, string | number | null> = {
-          date: day.date,
-          label: day.label,
+          date: bucket.date,
+          label: bucket.label,
         };
 
         CLIENT_CONVERSION_METRICS.forEach((metric) => {
-          const value = this.getConversionMetricValue(day.stats, metric.id);
+          const value = this.getConversionMetricValue(bucket.stats, metric.id);
           point[metric.id] = value.count;
           point[`${metric.id}Percent`] = value.percent;
         });
@@ -761,6 +993,84 @@ export class ReportStatsService {
     };
   }
 
+  private buildStatsFromAggregate(
+    branch: string | null,
+    aggregate: DashboardAggregate,
+  ): ReportBranchStats {
+    const duplicateErrors = aggregate.duplicateErrors;
+    const otherErrors = aggregate.errorCount - duplicateErrors;
+    const handedOver = aggregate.requestCount + aggregate.errorCount;
+    const wrongNumberStatus =
+      aggregate.statusCounts[RequestStatus.WRONG_NUMBER] || 0;
+    const wrongNumberTotal = wrongNumberStatus + otherErrors;
+    const employeeNumber = aggregate.statusCounts[RequestStatus.EMPLOYEE] || 0;
+    const hasNotWhatsapp =
+      aggregate.statusCounts[RequestStatus.HAS_NOT_WHATSAPP] || 0;
+    const incorrectTotal = wrongNumberTotal + employeeNumber + hasNotWhatsapp;
+    const called = SUCCESS_STATUSES.reduce(
+      (sum, status) => sum + (aggregate.statusCounts[status] || 0),
+      0,
+    );
+    const noAnswer = aggregate.statusCounts[RequestStatus.NO_ANSWER] || 0;
+    const unreachable = aggregate.statusCounts[RequestStatus.UNREACHABLE] || 0;
+    const correctTotal = called + duplicateErrors + noAnswer + unreachable;
+    const ratingCounts = this.cloneRatingCounts(aggregate.ratingCounts);
+
+    this.addExtraFivesToRatingCounts(
+      ratingCounts,
+      duplicateErrors + noAnswer + unreachable,
+    );
+
+    return {
+      branch: formatBranchName(branch),
+      handedOver: this.metric(handedOver),
+      incorrect: {
+        wrongNumber: this.metric(wrongNumberTotal),
+        employeeNumber: this.metric(employeeNumber),
+        hasNotWhatsapp: this.metric(hasNotWhatsapp),
+        total: this.metric(incorrectTotal, handedOver, {
+          key: 'transferred-numbers',
+          label: REPORT_METRIC_DEFINITIONS['transferred-numbers'].label,
+        }),
+      },
+      correct: {
+        called: this.metric(called, handedOver, {
+          key: 'transferred-numbers',
+          label: REPORT_METRIC_DEFINITIONS['transferred-numbers'].label,
+        }),
+        duplicates: this.metric(duplicateErrors),
+        noAnswer: this.metric(noAnswer),
+        unreachable: this.metric(unreachable),
+        total: this.metric(correctTotal, handedOver, {
+          key: 'transferred-numbers',
+          label: REPORT_METRIC_DEFINITIONS['transferred-numbers'].label,
+        }),
+      },
+      ratings: this.buildRatingMetrics(ratingCounts, correctTotal),
+      feedback: {
+        complaints: this.metric(
+          aggregate.statusCounts[RequestStatus.FEEDBACK_NEGATIVE] || 0,
+          correctTotal,
+          {
+            key: 'correct-total',
+            label: REPORT_METRIC_DEFINITIONS['correct-total'].label,
+          },
+        ),
+        suggestions: this.metric(
+          aggregate.statusCounts[RequestStatus.FEEDBACK_POSITIVE] || 0,
+        ),
+        notRelatedComplaints: this.metric(
+          aggregate.statusCounts[RequestStatus.FEEDBACK_NOT_RELATED] || 0,
+        ),
+      },
+      statusCounts: Object.values(RequestStatus).map((status) => ({
+        status,
+        label: STATUS_LABELS[status],
+        count: aggregate.statusCounts[status] || 0,
+      })),
+    };
+  }
+
   private buildRatingCounts(
     successRequests: PatientRequest[],
     extraFivesCount: number,
@@ -792,12 +1102,7 @@ export class ReportStatsService {
       counts.total[patientOverallScore] += 1;
     });
 
-    if (extraFivesCount > 0) {
-      REPORT_RATING_CATEGORIES.forEach((category) => {
-        counts[category.id][5] += extraFivesCount;
-      });
-      counts.total[5] += extraFivesCount;
-    }
+    this.addExtraFivesToRatingCounts(counts, extraFivesCount);
 
     return counts;
   }
@@ -842,6 +1147,105 @@ export class ReportStatsService {
     );
 
     return result;
+  }
+
+  private cloneRatingCounts(
+    counts: Record<ReportRatingCategoryId, Record<ReportScore, number>>,
+  ) {
+    const result = this.createRatingCounts();
+
+    [...REPORT_RATING_CATEGORIES, REPORT_TOTAL_RATING_CATEGORY].forEach(
+      (category) => {
+        REPORT_SCORE_VALUES.forEach((score) => {
+          result[category.id][score] = counts[category.id]?.[score] || 0;
+        });
+      },
+    );
+
+    return result;
+  }
+
+  private addExtraFivesToRatingCounts(
+    counts: Record<ReportRatingCategoryId, Record<ReportScore, number>>,
+    extraFivesCount: number,
+  ) {
+    if (extraFivesCount <= 0) return;
+
+    REPORT_RATING_CATEGORIES.forEach((category) => {
+      counts[category.id][5] += extraFivesCount;
+    });
+    counts.total[5] += extraFivesCount;
+  }
+
+  private createDashboardAggregate(): DashboardAggregate {
+    return {
+      requestCount: 0,
+      errorCount: 0,
+      duplicateErrors: 0,
+      statusCounts: this.createStatusCounts(),
+      ratingCounts: this.createRatingCounts(),
+    };
+  }
+
+  private createStatusCounts(): Record<RequestStatus, number> {
+    const result = {} as Record<RequestStatus, number>;
+
+    Object.values(RequestStatus).forEach((status) => {
+      result[status] = 0;
+    });
+
+    return result;
+  }
+
+  private getDashboardAggregate(
+    aggregates: Map<string, DashboardAggregate>,
+    bucket: string,
+  ) {
+    const key = bucket || '';
+    const existing = aggregates.get(key);
+
+    if (existing) return existing;
+
+    const aggregate = this.createDashboardAggregate();
+    aggregates.set(key, aggregate);
+
+    return aggregate;
+  }
+
+  private addStatusCount(
+    aggregate: DashboardAggregate,
+    status: RequestStatus,
+    count: number,
+  ) {
+    aggregate.requestCount += count;
+    aggregate.statusCounts[status] =
+      (aggregate.statusCounts[status] || 0) + count;
+  }
+
+  private addErrorCount(
+    aggregate: DashboardAggregate,
+    category: string,
+    count: number,
+  ) {
+    aggregate.errorCount += count;
+
+    if (category === 'DUPLICATE_FILE') {
+      aggregate.duplicateErrors += count;
+    }
+  }
+
+  private addRatingCounts(
+    aggregate: DashboardAggregate,
+    row: DashboardRatingAggregateRow,
+  ) {
+    [...REPORT_RATING_CATEGORIES, REPORT_TOTAL_RATING_CATEGORY].forEach(
+      (category) => {
+        REPORT_SCORE_VALUES.forEach((score) => {
+          const key = `${category.id}_${score}`;
+          aggregate.ratingCounts[category.id][score] += this.toCount(row[key]);
+        });
+      },
+    );
   }
 
   private createRatingMetrics() {
@@ -923,21 +1327,65 @@ export class ReportStatsService {
   }
 
   private buildDailyStats(data: ReportStatsData) {
-    return this.buildDateBuckets(data.start, data.end).map((day) => {
-      const date = this.formatDateKey(day);
-      const requests = data.requests.filter(
-        (request) => this.formatDateKey(request.arrivalDate) === date,
-      );
-      const errors = data.errorsLog.filter(
-        (error) => this.formatDateKey(error.arrivalDate) === date,
-      );
+    const bucketData = this.buildDashboardBuckets(data.start, data.end);
+    const requestsByBucket = this.groupByDashboardBucket(
+      data.requests,
+      bucketData.granularity,
+    );
+    const errorsByBucket = this.groupByDashboardBucket(
+      data.errorsLog,
+      bucketData.granularity,
+    );
 
+    return bucketData.buckets.map((bucket) => {
       return {
-        date,
-        label: this.formatDisplayDate(day),
-        stats: this.buildStatsForRows(null, requests, errors),
+        date: bucket.date,
+        label: bucket.label,
+        stats: this.buildStatsForRows(
+          null,
+          requestsByBucket.get(bucket.key) || [],
+          errorsByBucket.get(bucket.key) || [],
+        ),
       };
     });
+  }
+
+  private groupByDashboardBucket<T extends { arrivalDate: Date }>(
+    rows: T[],
+    granularity: DashboardGranularity,
+  ) {
+    const grouped = new Map<string, T[]>();
+
+    rows.forEach((row) => {
+      const key = this.formatBucketKey(row.arrivalDate, granularity);
+      const bucketRows = grouped.get(key) || [];
+      bucketRows.push(row);
+      grouped.set(key, bucketRows);
+    });
+
+    return grouped;
+  }
+
+  private buildDashboardBuckets(start: Date, end: Date) {
+    const granularity: DashboardGranularity =
+      this.countInclusiveDays(start, end) > DASHBOARD_DAILY_BUCKET_LIMIT
+        ? 'month'
+        : 'day';
+    const buckets =
+      granularity === 'day'
+        ? this.buildDateBuckets(start, end).map((day): DashboardBucket => {
+            const key = this.formatDateKey(day);
+
+            return {
+              key,
+              date: key,
+              label: this.formatDisplayDate(day),
+              anchorDate: day,
+            };
+          })
+        : this.buildMonthBuckets(start, end);
+
+    return { granularity, buckets };
   }
 
   private buildDateBuckets(start: Date, end: Date) {
@@ -953,6 +1401,51 @@ export class ReportStatsService {
     }
 
     return buckets;
+  }
+
+  private buildMonthBuckets(start: Date, end: Date): DashboardBucket[] {
+    const buckets: DashboardBucket[] = [];
+    const cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+    const last = new Date(end.getFullYear(), end.getMonth(), 1);
+
+    while (cursor.getTime() <= last.getTime()) {
+      const anchorDate = new Date(cursor);
+      const key = this.formatMonthKey(anchorDate);
+
+      buckets.push({
+        key,
+        date: `${key}-01`,
+        label: this.formatDisplayMonth(anchorDate),
+        anchorDate,
+      });
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+
+    return buckets;
+  }
+
+  private countInclusiveDays(start: Date, end: Date) {
+    const startDay = new Date(start);
+    startDay.setHours(0, 0, 0, 0);
+    const endDay = new Date(end);
+    endDay.setHours(0, 0, 0, 0);
+
+    return Math.floor((endDay.getTime() - startDay.getTime()) / MS_IN_DAY) + 1;
+  }
+
+  private dashboardBucketSql(alias: string, granularity: DashboardGranularity) {
+    if (granularity === 'month') {
+      return `to_char(date_trunc('month', ${alias}."arrivalDate"), 'YYYY-MM')`;
+    }
+
+    return `to_char(${alias}."arrivalDate", 'YYYY-MM-DD')`;
+  }
+
+  private ratingScoreSql(categoryId: string) {
+    const ratingValueSql = `feedback."ratings" ->> '${categoryId}'`;
+    const numericRatingSql = `CASE WHEN ${ratingValueSql} ~ '^[0-9]+(\\.[0-9]+)?$' THEN (${ratingValueSql})::numeric ELSE NULL END`;
+
+    return `CASE WHEN patient_request."status" = '${RequestStatus.FEEDBACK_NOT_RELATED}' THEN 5 WHEN ${numericRatingSql} IN (2, 3, 4, 5) THEN (${numericRatingSql})::int ELSE 5 END`;
   }
 
   private ratingAverage(ratings: Record<ReportScore, ReportMetricValue>) {
@@ -983,7 +1476,7 @@ export class ReportStatsService {
 
   private buildProcedureQualityPoint(
     categoryId: ProcedureQualityCategoryId,
-    day: Date,
+    bucket: DashboardBucket,
     index: number,
   ) {
     const category = PROCEDURE_QUALITY_CATEGORIES.find(
@@ -1000,8 +1493,8 @@ export class ReportStatsService {
     );
 
     return {
-      date: this.formatDateKey(day),
-      label: this.formatDisplayDate(day),
+      date: bucket.date,
+      label: bucket.label,
       average,
       value: average,
       count: 8 + ((index + seed) % 11),
@@ -1060,12 +1553,38 @@ export class ReportStatsService {
     return `${year}-${month}-${day}`;
   }
 
+  private formatBucketKey(date: Date, granularity: DashboardGranularity) {
+    return granularity === 'month'
+      ? this.formatMonthKey(date)
+      : this.formatDateKey(date);
+  }
+
+  private formatMonthKey(date: Date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+
+    return `${year}-${month}`;
+  }
+
   private formatDisplayDate(date: Date) {
     const day = String(date.getDate()).padStart(2, '0');
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const year = date.getFullYear();
 
     return `${day}.${month}.${year}`;
+  }
+
+  private formatDisplayMonth(date: Date) {
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+
+    return `${month}.${year}`;
+  }
+
+  private toCount(value: unknown) {
+    const numericValue = Number(value);
+
+    return Number.isFinite(numericValue) ? numericValue : 0;
   }
 
   private hashString(value: string) {

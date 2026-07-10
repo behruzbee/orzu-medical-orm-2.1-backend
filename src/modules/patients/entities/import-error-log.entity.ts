@@ -1,10 +1,16 @@
 import {
   Entity,
+  Index,
   Column,
   PrimaryGeneratedColumn,
   CreateDateColumn,
 } from 'typeorm';
 
+@Index('idx_import_error_logs_arrival_category_branch', [
+  'arrivalDate',
+  'category',
+  'branch',
+])
 @Entity('import_error_logs')
 export class ImportErrorLog {
   @PrimaryGeneratedColumn('uuid')

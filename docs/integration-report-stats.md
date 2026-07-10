@@ -95,7 +95,7 @@ x-api-key: YOUR_INTEGRATION_KEY
 
 ## Endpoints для dashboard / line chart
 
-Эти endpoints сразу подготовлены для интерфейса: если выбран месяц, в `points` и `series[].points` будут строки по дням.
+Эти endpoints сразу подготовлены для интерфейса: если выбран месяц или короткий период, в `points` и `series[].points` будут строки по дням. Для длинных периодов backend вернет месячные точки; шаг графика указан в `chart.granularity` (`day` или `month`).
 
 Качество обслуживания:
 
@@ -125,7 +125,8 @@ x-api-key: YOUR_INTEGRATION_KEY
   "chart": {
     "xAxisKey": "date",
     "yAxisKey": "average",
-    "valueKey": "value"
+    "valueKey": "value",
+    "granularity": "day"
   },
   "categories": [],
   "series": [
@@ -288,7 +289,7 @@ x-api-key: YOUR_INTEGRATION_KEY
 
 - `summary.average` / `summary.value` - средняя оценка за период.
 - `distribution` - распределение оценок `5/4/3/2`.
-- `series[0].points` - точки по дням.
+- `series[0].points` - точки по дням или месяцам, смотря на `chart.granularity`.
 - `points` - те же точки в плоском виде.
 
 ## Статусы заявок
