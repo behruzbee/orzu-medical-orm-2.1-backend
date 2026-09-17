@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
@@ -347,7 +352,35 @@ ${dto.comment || 'К заявке не оставлен комментарий.'
     });
   }
 
-  async getAnalytics() {
+  private resolveAnalyticsPeriod(dateFrom?: string, dateTo?: string) {
+    const today = new Date();
+    const defaultStart = new Date(today);
+    defaultStart.setDate(defaultStart.getDate() - 13);
+
+    const from = dateFrom || defaultStart.toISOString().slice(0, 10);
+    const to = dateTo || today.toISOString().slice(0, 10);
+
+    if (from > to) {
+      throw new BadRequestException('dateFrom must be before dateTo');
+    }
+
+    const days =
+      Math.floor(
+        (new Date(`${to}T00:00:00Z`).getTime() -
+          new Date(`${from}T00:00:00Z`).getTime()) /
+          86_400_000,
+      ) + 1;
+
+    return { dateFrom: from, dateTo: to, days };
+  }
+
+  async getAnalytics(dateFrom?: string, dateTo?: string) {
+    const period = this.resolveAnalyticsPeriod(dateFrom, dateTo);
+    const periodParams = {
+      dateFrom: period.dateFrom,
+      dateTo: period.dateTo,
+    };
+
     const summary = await this.feedbackRepo
       .createQueryBuilder('feedback')
       .select('COUNT(*)', 'total')
@@ -367,23 +400,31 @@ ${dto.comment || 'К заявке не оставлен комментарий.'
         'COUNT(*) FILTER (WHERE feedback.createdAt >= CURRENT_DATE)',
         'today',
       )
+      .where('feedback.createdAt >= CAST(:dateFrom AS date)', periodParams)
+      .andWhere(
+        "feedback.createdAt < CAST(:dateTo AS date) + INTERVAL '1 day'",
+        periodParams,
+      )
       .getRawOne();
 
-    const daily = await this.feedbackRepo.query(`
+    const daily = await this.feedbackRepo.query(
+      `
       SELECT
         TO_CHAR(day, 'YYYY-MM-DD') AS date,
         COUNT(f.id) FILTER (WHERE f.type = 'complaint')::int AS complaints,
         COUNT(f.id) FILTER (WHERE f.type = 'suggestion')::int AS suggestions
       FROM GENERATE_SERIES(
-        CURRENT_DATE - INTERVAL '13 days',
-        CURRENT_DATE,
+        $1::date,
+        $2::date,
         INTERVAL '1 day'
       ) AS day
       LEFT JOIN feedbacks f
         ON f."createdAt" >= day AND f."createdAt" < day + INTERVAL '1 day'
       GROUP BY day
       ORDER BY day
-    `);
+    `,
+      [period.dateFrom, period.dateTo],
+    );
 
     const categories = await this.feedbackRepo
       .createQueryBuilder('feedback')
@@ -392,6 +433,11 @@ ${dto.comment || 'К заявке не оставлен комментарий.'
       .addSelect(
         'COUNT(*) FILTER (WHERE feedback.occurrenceNumber > 1)',
         'repeated',
+      )
+      .where('feedback.createdAt >= CAST(:dateFrom AS date)', periodParams)
+      .andWhere(
+        "feedback.createdAt < CAST(:dateTo AS date) + INTERVAL '1 day'",
+        periodParams,
       )
       .groupBy('feedback.category')
       .orderBy('COUNT(*)', 'DESC')
@@ -405,6 +451,11 @@ ${dto.comment || 'К заявке не оставлен комментарий.'
       .addSelect(
         'COUNT(*) FILTER (WHERE feedback.occurrenceNumber > 1)',
         'repeated',
+      )
+      .where('feedback.createdAt >= CAST(:dateFrom AS date)', periodParams)
+      .andWhere(
+        "feedback.createdAt < CAST(:dateTo AS date) + INTERVAL '1 day'",
+        periodParams,
       )
       .groupBy('feedback.subcategory')
       .addGroupBy('feedback.category')
@@ -439,6 +490,7 @@ ${dto.comment || 'К заявке не оставлен комментарий.'
         count: Number(item.count),
         repeated: Number(item.repeated),
       })),
+      period,
       generatedAt: new Date().toISOString(),
     };
   }

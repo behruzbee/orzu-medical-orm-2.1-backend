@@ -14,6 +14,7 @@ import { FeedbacksService } from './feedbacks.service';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CreateSubcategoryDto } from './dto/create-subcategory.dto';
+import { AnalyticsQueryDto } from './dto/analytics-query.dto';
 
 @ApiTags('Feedbacks')
 @Controller('feedbacks')
@@ -32,8 +33,8 @@ export class FeedbacksController {
   @UseGuards(AuthGuard('jwt'))
   @ApiBearerAuth('jwt')
   @ApiOperation({ summary: 'Get live feedback BI analytics' })
-  getAnalytics() {
-    return this.feedbacksService.getAnalytics();
+  getAnalytics(@Query() query: AnalyticsQueryDto) {
+    return this.feedbacksService.getAnalytics(query.dateFrom, query.dateTo);
   }
 
   @Get('subcategories')
