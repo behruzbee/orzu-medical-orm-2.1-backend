@@ -6,6 +6,9 @@ import {
   IsOptional,
   ValidateNested,
   IsBoolean,
+  IsIn,
+  IsNotEmpty,
+  MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { CreateEvidenceDto } from './create-evidence.dto';
@@ -20,7 +23,14 @@ export class CreateFeedbackDto {
 
   @ApiProperty({ example: 'service' })
   @IsString()
+  @IsNotEmpty()
   category: string;
+
+  @ApiProperty({ example: 'Смеситель не работает' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(160)
+  subcategory: string;
 
   @ApiPropertyOptional({ example: 'Patient liked the service.' })
   @IsString()
@@ -42,7 +52,7 @@ export class CreateFeedbackDto {
     enum: ['complaint', 'suggestion'],
     example: 'complaint',
   })
-  @IsString()
+  @IsIn(['complaint', 'suggestion'])
   @IsOptional()
   type?: 'complaint' | 'suggestion';
 }

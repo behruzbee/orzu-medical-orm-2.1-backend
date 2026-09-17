@@ -6,6 +6,12 @@ import { RequestStatus } from 'src/common/enums/request-status.enum';
 import { TelegramService } from 'src/modules/telegram/telegram.service';
 import { Feedback } from 'src/modules/feedbacks/entities/feedback.entity';
 
+interface PositionRoute {
+  targetListId: string;
+  apiKey?: string;
+  apiToken?: string;
+}
+
 @Injectable()
 export class TrelloService {
   private readonly logger = new Logger(TrelloService.name);
@@ -150,6 +156,86 @@ export class TrelloService {
     }
   }
 
+  private getPositionRoutes(): Record<string, PositionRoute> {
+    const raw = this.configService.get<string>('TRELLO_POSITION_ROUTES');
+    if (!raw) return {};
+
+    try {
+      const parsed = JSON.parse(raw) as Record<string, string | PositionRoute>;
+      return Object.fromEntries(
+        Object.entries(parsed).map(([label, route]) => [
+          label.trim().toLocaleLowerCase('ru-RU'),
+          typeof route === 'string' ? { targetListId: route } : route,
+        ]),
+      );
+    } catch (error) {
+      this.logger.error(
+        `TRELLO_POSITION_ROUTES содержит невалидный JSON: ${error.message}`,
+      );
+      return {};
+    }
+  }
+
+  private async copyCardToPositionBoard(
+    sourceCardId: string,
+    label: { id?: string; name?: string },
+  ) {
+    const routes = this.getPositionRoutes();
+    const route = [label.id, label.name]
+      .filter(Boolean)
+      .map((value) => value!.trim().toLocaleLowerCase('ru-RU'))
+      .map((key) => routes[key])
+      .find(Boolean);
+
+    if (!route?.targetListId) return;
+
+    const sourceCard = await this.getCardDetails(sourceCardId);
+    const targetKey = route.apiKey || this.apiKey;
+    const targetToken = route.apiToken || this.apiToken;
+    const marker = `SourceTrelloCardID: ${sourceCardId}`;
+
+    const existingCards = await axios.get(
+      `${this.trelloUrl}/lists/${route.targetListId}/cards`,
+      {
+        params: {
+          key: targetKey,
+          token: targetToken,
+          fields: 'id,desc',
+        },
+      },
+    );
+
+    if (
+      existingCards.data.some((card: any) =>
+        String(card.desc || '').includes(marker),
+      )
+    ) {
+      this.logger.log(
+        `Копия карточки ${sourceCardId} для метки ${label.name || label.id} уже существует`,
+      );
+      return;
+    }
+
+    const response = await axios.post(
+      `${this.trelloUrl}/cards`,
+      {
+        idList: route.targetListId,
+        name: sourceCard.name,
+        desc: `${sourceCard.desc || ''}\n\n---\n${marker}`,
+        pos: 'top',
+      },
+      { params: { key: targetKey, token: targetToken } },
+    );
+
+    await this.addCommentToCard(
+      sourceCardId,
+      `✅ Карточка скопирована сотруднику по метке «${label.name || label.id}»: ${response.data.shortUrl || response.data.url}`,
+    );
+    this.logger.log(
+      `Карточка ${sourceCardId} скопирована в список ${route.targetListId}`,
+    );
+  }
+
   private async moveCard(cardId: string, listId: string) {
     await axios.put(
       `${this.trelloUrl}/cards/${cardId}`,
@@ -201,6 +287,20 @@ export class TrelloService {
   }
 
   async handleWebhookEvent(action: any) {
+    if (action.type === 'addLabelToCard' && action.data?.card?.id) {
+      try {
+        await this.copyCardToPositionBoard(
+          action.data.card.id,
+          action.data.label || {},
+        );
+      } catch (error) {
+        this.logger.error(
+          `Ошибка копирования карточки по метке должности: ${error.response?.data || error.message}`,
+        );
+      }
+      return;
+    }
+
     if (
       action.type !== 'updateCard' ||
       !action.data.listAfter ||
@@ -272,17 +372,16 @@ export class TrelloService {
             `Ошибка при обработке отсутствия комментария: ${error.message}`,
           );
         }
-        return; 
+        return;
       }
     }
 
     const suggestionsListId = this.configService.get('TRELLO_LIST_SUGGESTIONS');
-    const notRelatedListId = this.configService.get('TRELLO_LIST_NOT_RELATED'); 
+    const notRelatedListId = this.configService.get('TRELLO_LIST_NOT_RELATED');
 
     if (listAfterId === suggestionsListId) {
       await this.handleMovedToSuggestions(cardId);
-    }
-    else if (listAfterId === notRelatedListId) {
+    } else if (listAfterId === notRelatedListId) {
       await this.handleMovedToNotRelated(cardId);
     }
   }
@@ -291,9 +390,9 @@ export class TrelloService {
     try {
       const card = await this.getCardDetails(cardId);
       const desc = card.desc || '';
-      
+
       const match = desc.match(/FeedbackID:\s*([a-zA-Z0-9-]+)/);
-      if (!match || !match[1]) return; 
+      if (!match || !match[1]) return;
 
       const feedbackId = match[1];
 
@@ -302,29 +401,34 @@ export class TrelloService {
       await queryRunner.startTransaction();
 
       try {
-        const feedback = await queryRunner.manager.findOne(Feedback, { 
-          where: { id: feedbackId }, 
-          relations: ['request'] 
+        const feedback = await queryRunner.manager.findOne(Feedback, {
+          where: { id: feedbackId },
+          relations: ['request'],
         });
 
         if (feedback && feedback.request) {
           // Обновляем статус заявки на новый
           feedback.request.status = RequestStatus.FEEDBACK_NOT_RELATED;
           await queryRunner.manager.save(feedback.request);
-          
-          this.logger.log(`Статус заявки для Feedback ${feedbackId} успешно изменен на "Не относится к клинике"`);
+
+          this.logger.log(
+            `Статус заявки для Feedback ${feedbackId} успешно изменен на "Не относится к клинике"`,
+          );
         }
-        
+
         await queryRunner.commitTransaction();
       } catch (err) {
         await queryRunner.rollbackTransaction();
-        this.logger.error(`Ошибка БД при обновлении статуса "Не относится к клинике": ${err.message}`);
+        this.logger.error(
+          `Ошибка БД при обновлении статуса "Не относится к клинике": ${err.message}`,
+        );
       } finally {
         await queryRunner.release();
       }
-
     } catch (error) {
-      this.logger.error(`Ошибка при обработке переноса в "Не относится к клинике": ${error.message}`);
+      this.logger.error(
+        `Ошибка при обработке переноса в "Не относится к клинике": ${error.message}`,
+      );
     }
   }
 
@@ -354,6 +458,7 @@ export class TrelloService {
             newRatings[key] = 5;
           }
           feedback.ratings = newRatings;
+          feedback.type = 'suggestion';
           await queryRunner.manager.save(feedback);
 
           if (feedback.request) {
@@ -439,9 +544,9 @@ export class TrelloService {
 
     try {
       const url = `https://api.trello.com/1/cards/${cardId}?key=${this.apiKey}&token=${this.apiToken}`;
-      
+
       await axios.delete(url);
-      
+
       this.logger.log(`Карточка Trello с ID ${cardId} успешно удалена.`);
       return true;
     } catch (error) {
@@ -450,7 +555,7 @@ export class TrelloService {
           error.response?.data || error.message
         }`,
       );
-      return false; 
+      return false;
     }
   }
 }

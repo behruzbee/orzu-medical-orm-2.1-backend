@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
@@ -14,19 +14,109 @@ import {
 } from './entities/evidence-message.entity';
 import { CreateFeedbackDto } from './dto/create-feedback.dto';
 import { TrelloService } from '../trello/services/trello.service';
+import { FeedbackSubcategory } from './entities/feedback-subcategory.entity';
+import { CreateSubcategoryDto } from './dto/create-subcategory.dto';
+
+const DEFAULT_SUBCATEGORIES: Record<string, string[]> = {
+  doctors: ['Муомала', 'Ташхис', 'Даволаш сифати', 'Кутиш вақти'],
+  nurses: ['Муомала', 'Чақирувга кеч келиш', 'Муолажа сифати'],
+  cleanliness: ['Хона тозалиги', 'Санузел тозалиги', 'Чиқинди'],
+  food: ['Таом сифати', 'Меню', 'Етказиш вақти'],
+  reception: ['Муомала', 'Кутиш вақти', 'Маълумот нотўғри берилди'],
+  clinic: ['Смеситель ишламайди', 'Жиҳоз носоз', 'Шовқин', 'Ҳарорат'],
+};
 
 @Injectable()
-export class FeedbacksService {
+export class FeedbacksService implements OnModuleInit {
   constructor(
     @InjectRepository(Feedback)
     private feedbackRepo: Repository<Feedback>,
     @InjectRepository(EvidenceMessage)
     private evidenceRepo: Repository<EvidenceMessage>,
+    @InjectRepository(FeedbackSubcategory)
+    private subcategoryRepo: Repository<FeedbackSubcategory>,
     @InjectRepository(PatientRequest)
     private requestRepo: Repository<PatientRequest>,
     private readonly trelloService: TrelloService,
     private readonly configService: ConfigService,
   ) {}
+
+  async onModuleInit() {
+    const rows = (['complaint', 'suggestion'] as const).flatMap((type) =>
+      Object.entries(DEFAULT_SUBCATEGORIES).flatMap(([category, names]) =>
+        names.map((name) => ({
+          type,
+          category,
+          name,
+          normalizedName: this.normalizeSubcategory(name),
+          isCustom: false,
+        })),
+      ),
+    );
+
+    await this.subcategoryRepo.upsert(rows, {
+      conflictPaths: ['type', 'category', 'normalizedName'],
+      skipUpdateIfNoValuesChanged: true,
+    });
+
+    // The new column defaults to complaint for a safe schema update. Restore
+    // the real type of historical suggestions from their request status.
+    await this.feedbackRepo.query(`
+      UPDATE feedbacks AS feedback
+      SET type = 'suggestion'
+      FROM patient_requests AS request
+      WHERE feedback."requestId" = request.id
+        AND request.status = 'feedback_pos'
+        AND feedback.type <> 'suggestion'
+    `);
+  }
+
+  private normalizeSubcategory(value: string) {
+    return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase('ru-RU');
+  }
+
+  async createSubcategory(dto: CreateSubcategoryDto, isCustom = true) {
+    const name = dto.name.trim().replace(/\s+/g, ' ');
+    const category = dto.category.trim().toLowerCase();
+    const normalizedName = this.normalizeSubcategory(name);
+
+    const existing = await this.subcategoryRepo.findOne({
+      where: { type: dto.type, category, normalizedName },
+    });
+    if (existing) return existing;
+
+    try {
+      return await this.subcategoryRepo.save(
+        this.subcategoryRepo.create({
+          type: dto.type,
+          category,
+          name,
+          normalizedName,
+          isCustom,
+        }),
+      );
+    } catch {
+      return this.subcategoryRepo.findOneOrFail({
+        where: { type: dto.type, category, normalizedName },
+      });
+    }
+  }
+
+  async findSubcategories(type?: string, category?: string) {
+    const qb = this.subcategoryRepo
+      .createQueryBuilder('subcategory')
+      .orderBy('subcategory.isCustom', 'ASC')
+      .addOrderBy('subcategory.name', 'ASC');
+
+    if (type) qb.andWhere('subcategory.type = :type', { type });
+    if (category) {
+      qb.andWhere('subcategory.category = :category', {
+        category: category.trim().toLowerCase(),
+      });
+    }
+
+    return qb.getMany();
+  }
 
   async createComplaint(
     requestId: string,
@@ -68,6 +158,20 @@ export class FeedbacksService {
     if (!request) {
       throw new NotFoundException(`Заявка с ID ${requestId} не найдена`);
     }
+
+    const category = dto.category.trim().toLowerCase();
+    const subcategoryRecord = await this.createSubcategory(
+      { type, category, name: dto.subcategory },
+      true,
+    );
+    const occurrenceNumber =
+      (await this.feedbackRepo.count({
+        where: {
+          type,
+          category,
+          subcategory: subcategoryRecord.name,
+        },
+      })) + 1;
 
     const backendUrl = process.env.UPLOAD_URL || 'http://localhost:3000';
 
@@ -112,6 +216,10 @@ export class FeedbacksService {
       operatorId,
       ratings: dto.ratings,
       comment: dto.comment,
+      type,
+      category,
+      subcategory: subcategoryRecord.name,
+      occurrenceNumber,
       evidenceMessages: processedEvidence,
     });
 
@@ -170,7 +278,10 @@ export class FeedbacksService {
           evidenceText =
             '\n\n📎 Вложения:\n' +
             processedEvidence
-              .map((e, index) => `${index + 1}. Файл или сообщения: ${e.mediaUrl || e.text}`)
+              .map(
+                (e, index) =>
+                  `${index + 1}. Файл или сообщения: ${e.mediaUrl || e.text}`,
+              )
               .join('\n');
         }
 
@@ -191,7 +302,7 @@ export class FeedbacksService {
           categoryText = translationMap[dto.category];
         }
 
-        const cardName = `${branchName.toUpperCase()} — ${categoryText}`;
+        const cardName = `${branchName.toUpperCase()} — ${categoryText} — ${subcategoryRecord.name}`;
 
         const titleType = type === 'complaint' ? 'Жалоба' : 'Предложение';
         const icon = type === 'complaint' ? '📋' : '💡';
@@ -203,6 +314,8 @@ export class FeedbacksService {
 🏥 Филиал: ${branchName}
 🗓 Дата заезда: ${arrivalDateStr}
 📂 Категория: ${categoryText}
+📌 Подкатегория: ${subcategoryRecord.name}
+🔁 Повторность: ${occurrenceNumber > 1 ? `ПОВТОРНАЯ, обращение №${occurrenceNumber}` : 'первичная'}
 📝 Текст ва Далиллар:
 ${dto.comment || 'К заявке не оставлен комментарий.'}${evidenceText}${ratingsText}
 
@@ -232,6 +345,102 @@ ${dto.comment || 'К заявке не оставлен комментарий.'
       relations: ['request', 'evidenceMessages'],
       order: { createdAt: 'DESC' },
     });
+  }
+
+  async getAnalytics() {
+    const summary = await this.feedbackRepo
+      .createQueryBuilder('feedback')
+      .select('COUNT(*)', 'total')
+      .addSelect(
+        "COUNT(*) FILTER (WHERE feedback.type = 'complaint')",
+        'complaints',
+      )
+      .addSelect(
+        "COUNT(*) FILTER (WHERE feedback.type = 'suggestion')",
+        'suggestions',
+      )
+      .addSelect(
+        'COUNT(*) FILTER (WHERE feedback.occurrenceNumber > 1)',
+        'repeated',
+      )
+      .addSelect(
+        'COUNT(*) FILTER (WHERE feedback.createdAt >= CURRENT_DATE)',
+        'today',
+      )
+      .getRawOne();
+
+    const daily = await this.feedbackRepo.query(`
+      SELECT
+        TO_CHAR(day, 'YYYY-MM-DD') AS date,
+        COUNT(f.id) FILTER (WHERE f.type = 'complaint')::int AS complaints,
+        COUNT(f.id) FILTER (WHERE f.type = 'suggestion')::int AS suggestions
+      FROM GENERATE_SERIES(
+        CURRENT_DATE - INTERVAL '13 days',
+        CURRENT_DATE,
+        INTERVAL '1 day'
+      ) AS day
+      LEFT JOIN feedbacks f
+        ON f."createdAt" >= day AND f."createdAt" < day + INTERVAL '1 day'
+      GROUP BY day
+      ORDER BY day
+    `);
+
+    const categories = await this.feedbackRepo
+      .createQueryBuilder('feedback')
+      .select('feedback.category', 'category')
+      .addSelect('COUNT(*)', 'count')
+      .addSelect(
+        'COUNT(*) FILTER (WHERE feedback.occurrenceNumber > 1)',
+        'repeated',
+      )
+      .groupBy('feedback.category')
+      .orderBy('COUNT(*)', 'DESC')
+      .getRawMany();
+
+    const subcategories = await this.feedbackRepo
+      .createQueryBuilder('feedback')
+      .select('feedback.subcategory', 'name')
+      .addSelect('feedback.category', 'category')
+      .addSelect('COUNT(*)', 'count')
+      .addSelect(
+        'COUNT(*) FILTER (WHERE feedback.occurrenceNumber > 1)',
+        'repeated',
+      )
+      .groupBy('feedback.subcategory')
+      .addGroupBy('feedback.category')
+      .orderBy('COUNT(*)', 'DESC')
+      .limit(8)
+      .getRawMany();
+
+    const total = Number(summary?.total || 0);
+    const repeated = Number(summary?.repeated || 0);
+
+    return {
+      summary: {
+        total,
+        complaints: Number(summary?.complaints || 0),
+        suggestions: Number(summary?.suggestions || 0),
+        repeated,
+        today: Number(summary?.today || 0),
+        repeatRate: total ? Math.round((repeated / total) * 1000) / 10 : 0,
+      },
+      daily: daily.map((item) => ({
+        ...item,
+        complaints: Number(item.complaints),
+        suggestions: Number(item.suggestions),
+      })),
+      categories: categories.map((item) => ({
+        ...item,
+        count: Number(item.count),
+        repeated: Number(item.repeated),
+      })),
+      subcategories: subcategories.map((item) => ({
+        ...item,
+        count: Number(item.count),
+        repeated: Number(item.repeated),
+      })),
+      generatedAt: new Date().toISOString(),
+    };
   }
 
   async getEvidenceFile(id: string) {

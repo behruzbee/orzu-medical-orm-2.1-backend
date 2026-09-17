@@ -1,7 +1,10 @@
 import {
   Controller,
   Get,
+  Post,
   Param,
+  Body,
+  Query,
   Res,
   UseGuards,
   StreamableFile,
@@ -10,6 +13,7 @@ import { Response } from 'express';
 import { FeedbacksService } from './feedbacks.service';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { CreateSubcategoryDto } from './dto/create-subcategory.dto';
 
 @ApiTags('Feedbacks')
 @Controller('feedbacks')
@@ -22,6 +26,33 @@ export class FeedbacksController {
   @ApiOperation({ summary: 'Get all feedback records' })
   getAllFeedbacks() {
     return this.feedbacksService.findAll();
+  }
+
+  @Get('analytics')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth('jwt')
+  @ApiOperation({ summary: 'Get live feedback BI analytics' })
+  getAnalytics() {
+    return this.feedbacksService.getAnalytics();
+  }
+
+  @Get('subcategories')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth('jwt')
+  @ApiOperation({ summary: 'Get feedback subcategory dictionary' })
+  getSubcategories(
+    @Query('type') type?: string,
+    @Query('category') category?: string,
+  ) {
+    return this.feedbacksService.findSubcategories(type, category);
+  }
+
+  @Post('subcategories')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth('jwt')
+  @ApiOperation({ summary: 'Add a reusable feedback subcategory' })
+  createSubcategory(@Body() dto: CreateSubcategoryDto) {
+    return this.feedbacksService.createSubcategory(dto);
   }
 
   @Get('evidence/:id/file')
