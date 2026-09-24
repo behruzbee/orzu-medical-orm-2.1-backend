@@ -167,6 +167,8 @@ export class PatientsService {
       phoneCode,
       dateFrom,
       dateTo,
+      feedbackDateFrom,
+      feedbackDateTo,
     } = query;
 
     const skip = (page - 1) * limit;
@@ -208,6 +210,19 @@ export class PatientsService {
       });
     } else if (dateFrom) {
       qb.andWhere('request.arrivalDate >= :dateFrom', { dateFrom });
+    }
+
+    if (feedbackDateFrom) {
+      qb.andWhere('feedback.createdAt >= CAST(:feedbackDateFrom AS date)', {
+        feedbackDateFrom,
+      });
+    }
+
+    if (feedbackDateTo) {
+      qb.andWhere(
+        "feedback.createdAt < CAST(:feedbackDateTo AS date) + INTERVAL '1 day'",
+        { feedbackDateTo },
+      );
     }
 
     if (search) {

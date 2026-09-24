@@ -54,4 +54,14 @@ export class FindAllPatientsDto {
   @IsOptional()
   @IsISO8601()
   dateTo?: string;
+
+  @ApiPropertyOptional({ example: '2026-09-01' })
+  @IsOptional()
+  @IsISO8601()
+  feedbackDateFrom?: string;
+
+  @ApiPropertyOptional({ example: '2026-09-24' })
+  @IsOptional()
+  @IsISO8601()
+  feedbackDateTo?: string;
 }
