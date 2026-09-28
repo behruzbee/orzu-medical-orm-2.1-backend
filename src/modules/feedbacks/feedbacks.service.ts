@@ -327,10 +327,16 @@ ${dto.comment || 'К заявке не оставлен комментарий.'
 📅 Дата отправки: ${dateStr}
 🆔 FeedbackID: ${savedFeedback.id}`;
 
+        const boardId = this.configService.get<string>('TRELLO_BOARD_ID');
+        const branchLabelId = boardId
+          ? await this.trelloService.getOrCreateBranchLabel(boardId, branchName)
+          : null;
+
         const card = await this.trelloService.createCard(
           listId,
           cardName,
           cardDesc,
+          branchLabelId,
         );
 
         if (card && card.shortUrl) {
