@@ -19,6 +19,7 @@ export class TrelloService implements OnModuleInit {
   private readonly apiToken: string | undefined;
   private readonly targetApiKey: string | undefined;
   private readonly targetApiToken: string | undefined;
+  private readonly positionLabelColor: string;
   private readonly trelloUrl = 'https://api.trello.com/1';
 
   private readonly trelloColors = [
@@ -45,6 +46,8 @@ export class TrelloService implements OnModuleInit {
     this.targetApiToken = this.configService.get<string>(
       'TRELLO_TARGET_API_TOKEN',
     );
+    this.positionLabelColor =
+      this.configService.get<string>('TRELLO_POSITION_LABEL_COLOR') || 'blue';
   }
 
   async onModuleInit() {
@@ -78,6 +81,14 @@ export class TrelloService implements OnModuleInit {
     } catch (error) {
       return null;
     }
+  }
+
+  private async updateLabelColor(labelId: string, color: string) {
+    await axios.put(
+      `${this.trelloUrl}/labels/${labelId}`,
+      { color },
+      { params: { key: this.apiKey, token: this.apiToken } },
+    );
   }
 
   // Получение или создание метки для филиала
@@ -201,17 +212,29 @@ export class TrelloService implements OnModuleInit {
       const existingLabels = await this.getBoardLabels(boardId);
 
       for (const labelName of labelsToEnsure) {
-        const exists = existingLabels.some(
+        const existingLabel = existingLabels.find(
           (label: { name?: string }) =>
             label.name?.trim().toLocaleLowerCase('ru-RU') ===
             labelName.trim().toLocaleLowerCase('ru-RU'),
         );
 
-        if (exists) continue;
+        if (existingLabel) {
+          if (existingLabel.color !== this.positionLabelColor) {
+            await this.updateLabelColor(
+              existingLabel.id,
+              this.positionLabelColor,
+            );
+            existingLabel.color = this.positionLabelColor;
+            this.logger.log(`Цвет Trello-метки отдела «${labelName}» обновлён`);
+          }
+          continue;
+        }
 
-        const color =
-          this.trelloColors[labelName.length % this.trelloColors.length];
-        const created = await this.createLabel(boardId, labelName, color);
+        const created = await this.createLabel(
+          boardId,
+          labelName,
+          this.positionLabelColor,
+        );
 
         if (created) {
           existingLabels.push(created);
