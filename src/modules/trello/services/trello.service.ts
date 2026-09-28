@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 import axios from 'axios';
@@ -13,10 +13,12 @@ interface PositionRoute {
 }
 
 @Injectable()
-export class TrelloService {
+export class TrelloService implements OnModuleInit {
   private readonly logger = new Logger(TrelloService.name);
   private readonly apiKey: string | undefined;
   private readonly apiToken: string | undefined;
+  private readonly targetApiKey: string | undefined;
+  private readonly targetApiToken: string | undefined;
   private readonly trelloUrl = 'https://api.trello.com/1';
 
   private readonly trelloColors = [
@@ -39,6 +41,14 @@ export class TrelloService {
   ) {
     this.apiKey = this.configService.get<string>('TRELLO_API_KEY');
     this.apiToken = this.configService.get<string>('TRELLO_API_TOKEN');
+    this.targetApiKey = this.configService.get<string>('TRELLO_TARGET_API_KEY');
+    this.targetApiToken = this.configService.get<string>(
+      'TRELLO_TARGET_API_TOKEN',
+    );
+  }
+
+  async onModuleInit() {
+    await this.ensurePositionLabels();
   }
 
   // получения метка трелло
@@ -156,23 +166,62 @@ export class TrelloService {
     }
   }
 
-  private getPositionRoutes(): Record<string, PositionRoute> {
+  private getRawPositionRoutes(): Record<string, string | PositionRoute> {
     const raw = this.configService.get<string>('TRELLO_POSITION_ROUTES');
     if (!raw) return {};
 
     try {
-      const parsed = JSON.parse(raw) as Record<string, string | PositionRoute>;
-      return Object.fromEntries(
-        Object.entries(parsed).map(([label, route]) => [
-          label.trim().toLocaleLowerCase('ru-RU'),
-          typeof route === 'string' ? { targetListId: route } : route,
-        ]),
-      );
+      return JSON.parse(raw) as Record<string, string | PositionRoute>;
     } catch (error) {
       this.logger.error(
         `TRELLO_POSITION_ROUTES содержит невалидный JSON: ${error.message}`,
       );
       return {};
+    }
+  }
+
+  private getPositionRoutes(): Record<string, PositionRoute> {
+    return Object.fromEntries(
+      Object.entries(this.getRawPositionRoutes()).map(([label, route]) => [
+        label.trim().toLocaleLowerCase('ru-RU'),
+        typeof route === 'string' ? { targetListId: route } : route,
+      ]),
+    );
+  }
+
+  private async ensurePositionLabels() {
+    const boardId = this.configService.get<string>('TRELLO_BOARD_ID');
+    const labelsToEnsure = Object.keys(this.getRawPositionRoutes()).filter(
+      (label) => !/^[a-f0-9]{24}$/i.test(label),
+    );
+
+    if (!boardId || labelsToEnsure.length === 0) return;
+
+    try {
+      const existingLabels = await this.getBoardLabels(boardId);
+
+      for (const labelName of labelsToEnsure) {
+        const exists = existingLabels.some(
+          (label: { name?: string }) =>
+            label.name?.trim().toLocaleLowerCase('ru-RU') ===
+            labelName.trim().toLocaleLowerCase('ru-RU'),
+        );
+
+        if (exists) continue;
+
+        const color =
+          this.trelloColors[labelName.length % this.trelloColors.length];
+        const created = await this.createLabel(boardId, labelName, color);
+
+        if (created) {
+          existingLabels.push(created);
+          this.logger.log(`Создана Trello-метка отдела «${labelName}»`);
+        }
+      }
+    } catch (error) {
+      this.logger.error(
+        `Не удалось синхронизировать метки отделов: ${error.message}`,
+      );
     }
   }
 
@@ -190,8 +239,15 @@ export class TrelloService {
     if (!route?.targetListId) return;
 
     const sourceCard = await this.getCardDetails(sourceCardId);
-    const targetKey = route.apiKey || this.apiKey;
-    const targetToken = route.apiToken || this.apiToken;
+    const targetKey = route.apiKey || this.targetApiKey || this.apiKey;
+    const targetToken = route.apiToken || this.targetApiToken || this.apiToken;
+
+    if (!targetKey || !targetToken) {
+      this.logger.error(
+        `Для маршрута «${label.name || label.id}» не настроены Trello credentials`,
+      );
+      return;
+    }
     const marker = `SourceTrelloCardID: ${sourceCardId}`;
 
     const existingCards = await axios.get(
@@ -221,7 +277,7 @@ export class TrelloService {
       {
         idList: route.targetListId,
         name: sourceCard.name,
-        desc: `${sourceCard.desc || ''}\n\n---\n${marker}`,
+        desc: `${sourceCard.desc || ''}\n\n---\nИсходная карточка: ${sourceCard.shortUrl || sourceCard.url}\n${marker}`,
         pos: 'top',
       },
       { params: { key: targetKey, token: targetToken } },
