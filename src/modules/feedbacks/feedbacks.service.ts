@@ -524,27 +524,15 @@ ${dto.comment || 'К заявке не оставлен комментарий.'
       throw new NotFoundException(`Отзыв с ID ${feedbackId} не найден`);
     }
 
-    try {
-      if (feedback.trelloUrl) {
-        const trelloCardId = feedback.trelloUrl.split('/').pop()!;
-
-        await this.trelloService.deleteCard(trelloCardId);
-      }
-    } catch (error) {
-      console.error(`Ошибка при удалении карточки Trello:`, error.message);
-    }
-
     if (feedback.request) {
       feedback.request.status = RequestStatus.CONTACTED;
       await this.requestRepo.save(feedback.request);
     }
 
-    await this.feedbackRepo.remove(feedback);
-
     return {
       success: true,
       message:
-        'Отзыв успешно отменен, статус заявки восстановлен, карточка в Trello удалена.',
+        'Статус заявки восстановлен. Отзыв, доказательства и карточка Trello сохранены.',
     };
   }
 }

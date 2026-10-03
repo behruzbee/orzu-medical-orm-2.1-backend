@@ -138,6 +138,16 @@ export class PatientsService {
       throw new NotFoundException('Bemor topilmadi (Пациент не найден)');
     }
 
+    const hasNonNewRequest = patient.requests?.some(
+      (request) => request.status !== RequestStatus.NEW,
+    );
+
+    if (hasNonNewRequest) {
+      throw new BadRequestException(
+        "Bemorni o'chirish uchun barcha arizalar NEW statusida bo'lishi kerak (Для удаления пациента все заявки должны иметь статус NEW)",
+      );
+    }
+
     if (patient.requests && patient.requests.length > 0) {
       await this.requestRepository.softRemove(patient.requests);
     }

@@ -106,7 +106,8 @@ export class RequestActionsService {
       this.logger.log(`Reverted Feedback ${request.feedback.id} for Request ${requestId}`);
       
       return {
-        message: "Otzyv bekor qilindi, status CONTACTED ga qaytarildi",
+        message:
+          "Status CONTACTED ga qaytarildi. Otzyv va Trello kartochkasi saqlandi",
         status: 'contacted',
       };
     } 
