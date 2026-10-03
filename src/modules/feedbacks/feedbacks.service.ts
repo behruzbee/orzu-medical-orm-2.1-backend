@@ -5,7 +5,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Not, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -157,7 +157,7 @@ export class FeedbacksService implements OnModuleInit {
   ) {
     const request = await this.requestRepo.findOne({
       where: { id: requestId },
-      relations: ['patient'],
+      relations: ['patient', 'feedback', 'feedback.evidenceMessages'],
     });
 
     if (!request) {
@@ -172,6 +172,7 @@ export class FeedbacksService implements OnModuleInit {
     const occurrenceNumber =
       (await this.feedbackRepo.count({
         where: {
+          ...(request.feedback ? { id: Not(request.feedback.id) } : {}),
           type,
           category,
           subcategory: subcategoryRecord.name,
@@ -216,7 +217,7 @@ export class FeedbacksService implements OnModuleInit {
       }),
     );
 
-    const newFeedback = this.feedbackRepo.create({
+    const feedbackData = {
       requestId,
       operatorId,
       ratings: dto.ratings,
@@ -225,10 +226,20 @@ export class FeedbacksService implements OnModuleInit {
       category,
       subcategory: subcategoryRecord.name,
       occurrenceNumber,
-      evidenceMessages: processedEvidence,
-    });
+      evidenceMessages: [
+        ...(request.feedback?.evidenceMessages || []),
+        ...processedEvidence,
+      ],
+    };
 
-    const savedFeedback = await this.feedbackRepo.save(newFeedback);
+    // A reverted request keeps its original feedback for audit/history.
+    // Reuse that row when the operator submits a corrected result instead of
+    // inserting a second row that violates the one-feedback-per-request rule.
+    const feedbackToSave = request.feedback
+      ? this.feedbackRepo.merge(request.feedback, feedbackData)
+      : this.feedbackRepo.create(feedbackData);
+
+    const savedFeedback = await this.feedbackRepo.save(feedbackToSave);
 
     request.status =
       type === 'complaint'
@@ -332,12 +343,25 @@ ${dto.comment || 'К заявке не оставлен комментарий.'
           ? await this.trelloService.getOrCreateBranchLabel(boardId, branchName)
           : null;
 
-        const card = await this.trelloService.createCard(
-          listId,
-          cardName,
-          cardDesc,
-          branchLabelId,
-        );
+        const existingCardId = savedFeedback.trelloUrl
+          ? new URL(savedFeedback.trelloUrl).pathname
+              .split('/')
+              .filter(Boolean)[1]
+          : null;
+
+        const card = existingCardId
+          ? await this.trelloService.updateCard(
+              existingCardId,
+              listId,
+              cardName,
+              cardDesc,
+            )
+          : await this.trelloService.createCard(
+              listId,
+              cardName,
+              cardDesc,
+              branchLabelId,
+            );
 
         if (card && card.shortUrl) {
           savedFeedback.trelloUrl = card.shortUrl;

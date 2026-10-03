@@ -138,6 +138,34 @@ export class TrelloService implements OnModuleInit {
     }
   }
 
+  async updateCard(
+    cardId: string,
+    listId: string,
+    name: string,
+    description: string,
+  ) {
+    try {
+      const body: Record<string, string> = {
+        idList: listId,
+        name,
+        desc: description,
+      };
+
+      const response = await axios.put(
+        `${this.trelloUrl}/cards/${cardId}`,
+        body,
+        { params: { key: this.apiKey, token: this.apiToken } },
+      );
+      return response.data;
+    } catch (error) {
+      const trelloError = error.response?.data || error.message;
+      this.logger.error(
+        `Ошибка при обновлении карточки Trello. Причина: ${JSON.stringify(trelloError)}`,
+      );
+      throw error;
+    }
+  }
+
   // удаления карточки по ID отзыва
   async deleteCardByFeedbackId(feedbackId: string) {
     try {
