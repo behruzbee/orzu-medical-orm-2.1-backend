@@ -12,6 +12,8 @@ interface PositionRoute {
   apiToken?: string;
 }
 
+const DEFAULT_CAFETERIA_LIST_ID = '6ac7e7309170dee0f1e666e3';
+
 @Injectable()
 export class TrelloService implements OnModuleInit {
   private readonly logger = new Logger(TrelloService.name);
@@ -207,16 +209,26 @@ export class TrelloService implements OnModuleInit {
 
   private getRawPositionRoutes(): Record<string, string | PositionRoute> {
     const raw = this.configService.get<string>('TRELLO_POSITION_ROUTES');
-    if (!raw) return {};
+    const cafeteriaListId =
+      this.configService.get<string>('TRELLO_CAFETERIA_LIST_ID') ||
+      DEFAULT_CAFETERIA_LIST_ID;
 
-    try {
-      return JSON.parse(raw) as Record<string, string | PositionRoute>;
-    } catch (error) {
-      this.logger.error(
-        `TRELLO_POSITION_ROUTES содержит невалидный JSON: ${error.message}`,
-      );
-      return {};
+    let routes: Record<string, string | PositionRoute> = {};
+
+    if (raw) {
+      try {
+        routes = JSON.parse(raw) as Record<string, string | PositionRoute>;
+      } catch (error) {
+        this.logger.error(
+          `TRELLO_POSITION_ROUTES содержит невалидный JSON: ${error.message}`,
+        );
+      }
     }
+
+    return {
+      ...routes,
+      'Столовая': routes['Столовая'] || cafeteriaListId,
+    };
   }
 
   private getPositionRoutes(): Record<string, PositionRoute> {
