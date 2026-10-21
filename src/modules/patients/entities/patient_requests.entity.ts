@@ -20,6 +20,7 @@ import { Feedback } from 'src/modules/feedbacks/entities/feedback.entity'; // П
   'status',
   'branch',
 ])
+@Index('idx_patient_requests_created_branch', ['createdAt', 'branch'])
 @Entity('patient_requests')
 export class PatientRequest {
   @PrimaryGeneratedColumn('uuid')

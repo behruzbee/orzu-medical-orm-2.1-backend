@@ -12,7 +12,12 @@ import {
 import { Response } from 'express';
 import { FeedbacksService } from './feedbacks.service';
 import { AuthGuard } from '@nestjs/passport';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CreateSubcategoryDto } from './dto/create-subcategory.dto';
 import { AnalyticsQueryDto } from './dto/analytics-query.dto';
 
@@ -32,9 +37,17 @@ export class FeedbacksController {
   @Get('analytics')
   @UseGuards(AuthGuard('jwt'))
   @ApiBearerAuth('jwt')
-  @ApiOperation({ summary: 'Get live feedback BI analytics' })
+  @ApiOperation({ summary: 'Get feedback and request BI analytics' })
+  @ApiOkResponse({
+    description:
+      'Feedback totals, request processing and call totals, daily chart points, and available branches.',
+  })
   getAnalytics(@Query() query: AnalyticsQueryDto) {
-    return this.feedbacksService.getAnalytics(query.dateFrom, query.dateTo);
+    return this.feedbacksService.getAnalytics(
+      query.dateFrom,
+      query.dateTo,
+      query.branch,
+    );
   }
 
   @Get('subcategories')

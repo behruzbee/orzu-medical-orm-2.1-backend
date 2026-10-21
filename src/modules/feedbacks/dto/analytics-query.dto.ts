@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsDateString, IsOptional } from 'class-validator';
+import { IsDateString, IsOptional, IsString } from 'class-validator';
 
 export class AnalyticsQueryDto {
   @ApiPropertyOptional({ example: '2026-09-01' })
@@ -11,4 +11,9 @@ export class AnalyticsQueryDto {
   @IsOptional()
   @IsDateString()
   dateTo?: string;
+
+  @ApiPropertyOptional({ example: 'Юнусобод филиал' })
+  @IsOptional()
+  @IsString()
+  branch?: string;
 }

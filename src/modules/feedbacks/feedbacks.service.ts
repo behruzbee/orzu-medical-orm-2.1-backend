@@ -21,6 +21,7 @@ import { CreateFeedbackDto } from './dto/create-feedback.dto';
 import { TrelloService } from '../trello/services/trello.service';
 import { FeedbackSubcategory } from './entities/feedback-subcategory.entity';
 import { CreateSubcategoryDto } from './dto/create-subcategory.dto';
+import { formatBranchName } from 'src/common/utils/branch.util';
 
 const DEFAULT_SUBCATEGORIES: Record<string, string[]> = {
   doctors: ['Муомала', 'Ташхис', 'Даволаш сифати', 'Кутиш вақти'],
@@ -404,97 +405,174 @@ ${dto.comment || 'К заявке не оставлен комментарий.'
     return { dateFrom: from, dateTo: to, days };
   }
 
-  async getAnalytics(dateFrom?: string, dateTo?: string) {
+  async getAnalytics(dateFrom?: string, dateTo?: string, branch?: string) {
     const period = this.resolveAnalyticsPeriod(dateFrom, dateTo);
     const periodParams = {
       dateFrom: period.dateFrom,
       dateTo: period.dateTo,
     };
 
-    const summary = await this.feedbackRepo
-      .createQueryBuilder('feedback')
-      .select('COUNT(*)', 'total')
-      .addSelect(
-        "COUNT(*) FILTER (WHERE feedback.type = 'complaint')",
-        'complaints',
-      )
-      .addSelect(
-        "COUNT(*) FILTER (WHERE feedback.type = 'suggestion')",
-        'suggestions',
-      )
-      .addSelect(
-        'COUNT(*) FILTER (WHERE feedback.occurrenceNumber > 1)',
-        'repeated',
-      )
-      .addSelect(
-        'COUNT(*) FILTER (WHERE feedback.createdAt >= CURRENT_DATE)',
-        'today',
-      )
-      .where('feedback.createdAt >= CAST(:dateFrom AS date)', periodParams)
-      .andWhere(
-        "feedback.createdAt < CAST(:dateTo AS date) + INTERVAL '1 day'",
-        periodParams,
-      )
-      .getRawOne();
+    const branchRows = await this.requestRepo
+      .createQueryBuilder('request')
+      .select('DISTINCT request.branch', 'branch')
+      .orderBy('request.branch', 'ASC')
+      .getRawMany<{ branch: string }>();
+    const branches = [
+      ...new Set(
+        branchRows.map((row) => formatBranchName(row.branch)).filter(Boolean),
+      ),
+    ] as string[];
+    const branchValues = branch
+      ? branchRows
+          .filter((row) => formatBranchName(row.branch) === branch)
+          .map((row) => row.branch)
+      : null;
+    if (branch && !branchValues?.length) {
+      throw new BadRequestException('Unknown branch');
+    }
 
-    const daily = await this.feedbackRepo.query(
-      `
-      SELECT
-        TO_CHAR(day, 'YYYY-MM-DD') AS date,
-        COUNT(f.id) FILTER (WHERE f.type = 'complaint')::int AS complaints,
-        COUNT(f.id) FILTER (WHERE f.type = 'suggestion')::int AS suggestions
-      FROM GENERATE_SERIES(
-        $1::date,
-        $2::date,
-        INTERVAL '1 day'
-      ) AS day
-      LEFT JOIN feedbacks f
-        ON f."createdAt" >= day AND f."createdAt" < day + INTERVAL '1 day'
-      GROUP BY day
-      ORDER BY day
-    `,
-      [period.dateFrom, period.dateTo],
-    );
+    const feedbackQuery = () => {
+      const query = this.feedbackRepo
+        .createQueryBuilder('feedback')
+        .where('feedback.createdAt >= CAST(:dateFrom AS date)', periodParams)
+        .andWhere(
+          "feedback.createdAt < CAST(:dateTo AS date) + INTERVAL '1 day'",
+          periodParams,
+        );
+      if (branchValues) {
+        query
+          .innerJoin('feedback.request', 'request')
+          .andWhere('request.branch IN (:...branchValues)', { branchValues });
+      }
+      return query;
+    };
+    const requestQuery = () => {
+      const query = this.requestRepo
+        .createQueryBuilder('request')
+        .where('request.createdAt >= CAST(:dateFrom AS date)', periodParams)
+        .andWhere(
+          "request.createdAt < CAST(:dateTo AS date) + INTERVAL '1 day'",
+          periodParams,
+        );
+      if (branchValues) {
+        query.andWhere('request.branch IN (:...branchValues)', {
+          branchValues,
+        });
+      }
+      return query;
+    };
 
-    const categories = await this.feedbackRepo
-      .createQueryBuilder('feedback')
-      .select('feedback.category', 'category')
-      .addSelect('COUNT(*)', 'count')
-      .addSelect(
-        'COUNT(*) FILTER (WHERE feedback.occurrenceNumber > 1)',
-        'repeated',
-      )
-      .where('feedback.createdAt >= CAST(:dateFrom AS date)', periodParams)
-      .andWhere(
-        "feedback.createdAt < CAST(:dateTo AS date) + INTERVAL '1 day'",
-        periodParams,
-      )
-      .groupBy('feedback.category')
-      .orderBy('COUNT(*)', 'DESC')
-      .getRawMany();
-
-    const subcategories = await this.feedbackRepo
-      .createQueryBuilder('feedback')
-      .select('feedback.subcategory', 'name')
-      .addSelect('feedback.category', 'category')
-      .addSelect('COUNT(*)', 'count')
-      .addSelect(
-        'COUNT(*) FILTER (WHERE feedback.occurrenceNumber > 1)',
-        'repeated',
-      )
-      .where('feedback.createdAt >= CAST(:dateFrom AS date)', periodParams)
-      .andWhere(
-        "feedback.createdAt < CAST(:dateTo AS date) + INTERVAL '1 day'",
-        periodParams,
-      )
-      .groupBy('feedback.subcategory')
-      .addGroupBy('feedback.category')
-      .orderBy('COUNT(*)', 'DESC')
-      .limit(8)
-      .getRawMany();
+    const [
+      summary,
+      dailyRows,
+      categories,
+      subcategories,
+      requestSummary,
+      requestDailyRows,
+    ] = await Promise.all([
+      feedbackQuery()
+        .select('COUNT(*)', 'total')
+        .addSelect(
+          "COUNT(*) FILTER (WHERE feedback.type = 'complaint')",
+          'complaints',
+        )
+        .addSelect(
+          "COUNT(*) FILTER (WHERE feedback.type = 'suggestion')",
+          'suggestions',
+        )
+        .addSelect(
+          'COUNT(*) FILTER (WHERE feedback.occurrenceNumber > 1)',
+          'repeated',
+        )
+        .addSelect(
+          'COUNT(*) FILTER (WHERE feedback.createdAt >= CURRENT_DATE)',
+          'today',
+        )
+        .getRawOne(),
+      feedbackQuery()
+        .select("TO_CHAR(feedback.createdAt, 'YYYY-MM-DD')", 'date')
+        .addSelect(
+          "COUNT(*) FILTER (WHERE feedback.type = 'complaint')",
+          'complaints',
+        )
+        .addSelect(
+          "COUNT(*) FILTER (WHERE feedback.type = 'suggestion')",
+          'suggestions',
+        )
+        .groupBy("TO_CHAR(feedback.createdAt, 'YYYY-MM-DD')")
+        .getRawMany(),
+      feedbackQuery()
+        .select('feedback.category', 'category')
+        .addSelect('COUNT(*)', 'count')
+        .addSelect(
+          'COUNT(*) FILTER (WHERE feedback.occurrenceNumber > 1)',
+          'repeated',
+        )
+        .groupBy('feedback.category')
+        .orderBy('COUNT(*)', 'DESC')
+        .getRawMany(),
+      feedbackQuery()
+        .select('feedback.subcategory', 'name')
+        .addSelect('feedback.category', 'category')
+        .addSelect('COUNT(*)', 'count')
+        .addSelect(
+          'COUNT(*) FILTER (WHERE feedback.occurrenceNumber > 1)',
+          'repeated',
+        )
+        .groupBy('feedback.subcategory')
+        .addGroupBy('feedback.category')
+        .orderBy('COUNT(*)', 'DESC')
+        .limit(8)
+        .getRawMany(),
+      requestQuery()
+        .select('COUNT(*)', 'total')
+        .addSelect(
+          "COUNT(*) FILTER (WHERE request.status <> 'new')",
+          'processed',
+        )
+        .addSelect(
+          "COUNT(*) FILTER (WHERE request.status IN ('contacted', 'all_ok', 'feedback_pos', 'feedback_neg', 'feedback_not_related'))",
+          'answered',
+        )
+        .addSelect(
+          "COUNT(*) FILTER (WHERE request.status IN ('no_answer', 'unreachable'))",
+          'missed',
+        )
+        .addSelect(
+          "COUNT(*) FILTER (WHERE request.status = 'feedback_neg')",
+          'complaints',
+        )
+        .addSelect(
+          "COUNT(*) FILTER (WHERE request.status = 'feedback_pos')",
+          'suggestions',
+        )
+        .getRawOne(),
+      requestQuery()
+        .select("TO_CHAR(request.createdAt, 'YYYY-MM-DD')", 'date')
+        .addSelect('COUNT(*)', 'total')
+        .addSelect(
+          "COUNT(*) FILTER (WHERE request.status IN ('contacted', 'all_ok', 'feedback_pos', 'feedback_neg', 'feedback_not_related'))",
+          'answered',
+        )
+        .addSelect(
+          "COUNT(*) FILTER (WHERE request.status IN ('no_answer', 'unreachable'))",
+          'missed',
+        )
+        .groupBy("TO_CHAR(request.createdAt, 'YYYY-MM-DD')")
+        .getRawMany(),
+    ]);
 
     const total = Number(summary?.total || 0);
     const repeated = Number(summary?.repeated || 0);
+    const feedbackByDate = new Map(dailyRows.map((row) => [row.date, row]));
+    const requestsByDate = new Map(
+      requestDailyRows.map((row) => [row.date, row]),
+    );
+    const dates = Array.from({ length: period.days }, (_, index) => {
+      const date = new Date(`${period.dateFrom}T00:00:00Z`);
+      date.setUTCDate(date.getUTCDate() + index);
+      return date.toISOString().slice(0, 10);
+    });
 
     return {
       summary: {
@@ -505,11 +583,29 @@ ${dto.comment || 'К заявке не оставлен комментарий.'
         today: Number(summary?.today || 0),
         repeatRate: total ? Math.round((repeated / total) * 1000) / 10 : 0,
       },
-      daily: daily.map((item) => ({
-        ...item,
-        complaints: Number(item.complaints),
-        suggestions: Number(item.suggestions),
+      daily: dates.map((date) => ({
+        date,
+        complaints: Number(feedbackByDate.get(date)?.complaints || 0),
+        suggestions: Number(feedbackByDate.get(date)?.suggestions || 0),
       })),
+      requests: {
+        summary: {
+          total: Number(requestSummary?.total || 0),
+          processed: Number(requestSummary?.processed || 0),
+          answered: Number(requestSummary?.answered || 0),
+          missed: Number(requestSummary?.missed || 0),
+          complaints: Number(requestSummary?.complaints || 0),
+          suggestions: Number(requestSummary?.suggestions || 0),
+        },
+        daily: dates.map((date) => ({
+          date,
+          total: Number(requestsByDate.get(date)?.total || 0),
+          answered: Number(requestsByDate.get(date)?.answered || 0),
+          missed: Number(requestsByDate.get(date)?.missed || 0),
+        })),
+      },
+      branches,
+      selectedBranch: branch || null,
       categories: categories.map((item) => ({
         ...item,
         count: Number(item.count),
