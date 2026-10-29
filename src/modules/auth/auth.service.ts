@@ -1,6 +1,5 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { QrAuthStrategy } from './strategies/qr-auth.strategy';
 import { LoginDto } from './dto/login.dto';
 import { PinAuthStrategy } from './strategies/pin-auth.strategy';
 
@@ -9,7 +8,6 @@ export class AuthService {
   constructor(
     private jwtService: JwtService,
     private pinStrategy: PinAuthStrategy,
-    private qrStrategy: QrAuthStrategy,
   ) {}
 
   async login(dto: LoginDto) {
@@ -20,18 +18,15 @@ export class AuthService {
         user = await this.pinStrategy.validate(dto);
         break;
 
-      case 'qr':
-        user = await this.qrStrategy.validate();
-        break;
-
       default:
-        throw new BadRequestException('Noto\'g\'ri kirish usuli');
+        throw new BadRequestException("Noto'g'ri kirish usuli");
     }
 
-    const payload = { 
-      sub: user.id, 
-      phone: user.phone, 
-      role: user.role 
+    const payload = {
+      sub: user.id,
+      phone: user.phone,
+      role: user.role,
+      tokenVersion: user.tokenVersion,
     };
 
     return {

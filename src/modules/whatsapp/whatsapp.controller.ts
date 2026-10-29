@@ -12,6 +12,7 @@ import { WhatsappService } from './whatsapp.service';
 import { AuthGuard } from '@nestjs/passport';
 import { BroadcastDto } from './dto/broadcast.dto';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { AdminGuard } from 'src/common/guards/admin.guard';
 
 @ApiTags('WhatsApp')
 @ApiBearerAuth('jwt')
@@ -19,6 +20,13 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 @UseGuards(AuthGuard('jwt'))
 export class WhatsappController {
   constructor(private readonly whatsappService: WhatsappService) {}
+
+  @Get('qr-status')
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: 'Get WhatsApp connection QR for administrators' })
+  getQrStatus() {
+    return this.whatsappService.getQrStatus();
+  }
 
   @Get('history')
   @ApiOperation({ summary: 'Get WhatsApp chat history by phone' })

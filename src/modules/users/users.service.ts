@@ -8,6 +8,7 @@ import { Repository } from 'typeorm';
 import { Employee } from './entities/employee.entity';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
+import { hashPin } from 'src/common/utils/pin.util';
 
 @Injectable()
 export class UsersService {
@@ -24,7 +25,10 @@ export class UsersService {
       );
     }
 
-    const employee = this.employeeRepository.create(dto);
+    const employee = this.employeeRepository.create({
+      ...dto,
+      pin: dto.pin ? hashPin(dto.pin) : undefined,
+    });
     return this.employeeRepository.save(employee);
   }
 
@@ -40,5 +44,26 @@ export class UsersService {
 
   async findOneByPhone(phone: string) {
     return this.employeeRepository.findOne({ where: { phone } });
+  }
+
+  async findForLogin(phone: string) {
+    return this.employeeRepository
+      .createQueryBuilder('employee')
+      .addSelect('employee.pin')
+      .where('employee.phone = :phone', { phone })
+      .getOne();
+  }
+
+  async findActiveById(id: string) {
+    return this.employeeRepository.findOne({ where: { id, isActive: true } });
+  }
+
+  async replacePin(id: string, pin: string) {
+    await this.employeeRepository
+      .createQueryBuilder()
+      .update(Employee)
+      .set({ pin: hashPin(pin), tokenVersion: () => '"tokenVersion" + 1' })
+      .where('id = :id', { id })
+      .execute();
   }
 }

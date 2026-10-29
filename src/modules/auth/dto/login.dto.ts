@@ -2,9 +2,9 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsString, Matches, Length, IsOptional, IsEnum } from 'class-validator';
 
 export class LoginDto {
-  @ApiProperty({ enum: ['pin', 'qr'], example: 'pin' })
-  @IsEnum(['pin', 'qr'], { message: "Metod 'pin' yoki 'qr' bo'lishi kerak" })
-  method: 'pin' | 'qr';
+  @ApiProperty({ enum: ['pin'], example: 'pin' })
+  @IsEnum(['pin'], { message: "Metod 'pin' bo'lishi kerak" })
+  method: 'pin';
 
   // Обязательно только для метода 'pin'
   @ApiPropertyOptional({ example: '+998901234567' })

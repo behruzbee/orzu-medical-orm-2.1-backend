@@ -6,15 +6,18 @@ import { PatientRequest } from 'src/modules/patients/entities/patient_requests.e
 import { DoctorMessagesController } from './doctor-messages.controller';
 import { DoctorMessagesService } from './doctor-messages.service';
 import { DoctorPatientMessage } from './entities/doctor-patient-message.entity';
+import { getJwtSecret } from 'src/common/utils/jwt-secret.util';
+import { UsersModule } from 'src/modules/users/users.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([DoctorPatientMessage, PatientRequest]),
+    UsersModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService): JwtModuleOptions => {
-        const secret = config.get<string>('JWT_SECRET') || 'default_secret_key';
+        const secret = getJwtSecret(config);
         const expiresIn = config.get<string>('JWT_EXPIRES_IN') || '1d';
 
         return {

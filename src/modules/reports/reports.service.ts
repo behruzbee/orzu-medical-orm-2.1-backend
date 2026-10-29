@@ -1,10 +1,12 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as ExcelJS from 'exceljs';
 import { format } from 'date-fns';
 import * as fs from 'fs/promises';
+import { createReadStream } from 'fs';
 import * as path from 'path';
+import { randomUUID } from 'crypto';
 
 import { Report } from './entities/report.entity';
 import { RequestStatus } from 'src/common/enums/request-status.enum';
@@ -37,14 +39,37 @@ export class ReportsService {
   ) {}
 
   async findAll() {
-    return this.reportRepository.find({
+    const reports = await this.reportRepository.find({
       order: { createdAt: 'DESC' },
     });
+    return reports.map((report) => ({
+      ...report,
+      fileUrl: `/api/reports/${report.id}/download`,
+    }));
+  }
+
+  async openReport(id: string) {
+    const report = await this.reportRepository.findOne({ where: { id } });
+    if (!report || path.basename(report.name) !== report.name) {
+      throw new NotFoundException('Report not found');
+    }
+    const filePath = path.join(
+      process.cwd(),
+      'uploads',
+      'reports',
+      report.name,
+    );
+    try {
+      await fs.access(filePath);
+    } catch {
+      throw new NotFoundException('Report file not found');
+    }
+    return { name: report.name, stream: createReadStream(filePath) };
   }
 
   async generateReport(dto: GenerateReportDto) {
     const reportData = await this.reportStatsService.loadReportData(dto, {
-      includeReportRelations: true,
+      includeReportRelations: dto.includePersonalData === true,
     });
     const { start, end, requests, errorsLog, branchList, branches, totals } =
       reportData;
@@ -281,7 +306,7 @@ export class ReportsService {
       rowValues[75] = branchStats.feedback.complaints.ratio || 0;
       rowValues[76] = branchStats.feedback.suggestions.count;
       rowValues[77] = branchStats.feedback.notRelatedComplaints.count;
-      rowValues[78] = 'Вкладка "Ссылки"';
+      rowValues[78] = dto.includePersonalData === true ? 'Вкладка "Ссылки"' : '';
 
       const row = worksheet.addRow(rowValues.slice(1));
 
@@ -372,275 +397,278 @@ export class ReportsService {
     // ==========================================
     // 3. ВКЛАДКА 2: ССЫЛКИ И МЕДИА
     // ==========================================
-    const linksSheet = workbook.addWorksheet('Хаволалар (Ссылки)');
-    linksSheet.addRow([
-      'ДЕТАЛИЗАЦИЯ ЖАЛОБ И ПРЕДЛОЖЕНИЙ (ССЫЛКИ TRELLO И ФАЙЛЫ)',
-    ]);
-    linksSheet.mergeCells('A1:G1');
-    linksSheet.getCell('A1').font = { bold: true, size: 12 };
-    linksSheet.getCell('A1').alignment = {
-      horizontal: 'center',
-      vertical: 'middle',
-    };
-    linksSheet.getRow(1).height = 30;
+    if (dto.includePersonalData === true) {
+      const linksSheet = workbook.addWorksheet('Хаволалар (Ссылки)');
+      linksSheet.addRow([
+        'ДЕТАЛИЗАЦИЯ ЖАЛОБ И ПРЕДЛОЖЕНИЙ (ССЫЛКИ TRELLO И ФАЙЛЫ)',
+      ]);
+      linksSheet.mergeCells('A1:G1');
+      linksSheet.getCell('A1').font = { bold: true, size: 12 };
+      linksSheet.getCell('A1').alignment = {
+        horizontal: 'center',
+        vertical: 'middle',
+      };
+      linksSheet.getRow(1).height = 30;
 
-    const linkHeaders = [
-      '№',
-      'Филиал',
-      'Бемор (Пациент)',
-      'Телефон',
-      'Тип',
-      'Trello URL',
-      'Файлы (Медиа)',
-    ];
-    const lRow = linksSheet.addRow(linkHeaders);
-    lRow.eachCell((c) => {
-      c.fill = fillStyle(C_GRAY);
-      c.font = { bold: true };
-      c.border = borderStyle;
-      c.alignment = alignCenter;
-    });
-
-    let linkIndex = 1;
-    branchList.forEach((branch) => {
-      const bReqs = requests.filter(
-        (r) =>
-          r.branch === branch &&
-          [
-            RequestStatus.FEEDBACK_NEGATIVE,
-            RequestStatus.FEEDBACK_POSITIVE,
-            RequestStatus.FEEDBACK_NOT_RELATED,
-          ].includes(r.status),
-      );
-      const itemsToPrint = bReqs.filter(
-        (r) =>
-          r.feedback?.trelloUrl ||
-          (r.feedback?.evidenceMessages &&
-            r.feedback.evidenceMessages.length > 0),
-      );
-
-      if (itemsToPrint.length === 0) return;
-
-      // @ts-ignore
-      const startRow = linksSheet.lastRow.number + 1;
-      itemsToPrint.forEach((req) => {
-        let typeStr = 'Жалоба (Шикоят)';
-        if (req.status === RequestStatus.FEEDBACK_POSITIVE)
-          typeStr = 'Предложение (Таклиф)';
-        else if (req.status === RequestStatus.FEEDBACK_NOT_RELATED)
-          typeStr = 'Другое (Клиникага тегишли эмас)';
-
-        const trelloCell = req.feedback?.trelloUrl
-          ? { text: 'Перейти в Trello', hyperlink: req.feedback.trelloUrl }
-          : '-';
-        let mediaCell: any = '-';
-
-        if (req.feedback?.evidenceMessages?.length > 0) {
-          const mediaLinks = req.feedback.evidenceMessages
-            .map((e) => e.mediaUrl)
-            .filter(Boolean);
-          if (mediaLinks.length === 1) {
-            mediaCell = { text: 'Открыть файл', hyperlink: mediaLinks[0] };
-          } else if (mediaLinks.length > 1) {
-            mediaCell = {
-              text: `Файлов: ${mediaLinks.length} (Нажмите для открытия 1-го)`,
-              hyperlink: mediaLinks[0],
-            };
-          }
-        }
-
-        const row = linksSheet.addRow([
-          linkIndex++,
-          branch,
-          req.patient?.name || '-',
-          req.patient?.phone || '-',
-          typeStr,
-          trelloCell,
-          mediaCell,
-        ]);
-
-        row.eachCell({ includeEmpty: true }, (c, colNum) => {
-          c.border = borderStyle;
-          c.alignment = alignCenter;
-          if ((colNum === 6 || colNum === 7) && c.value !== '-')
-            c.font = { color: { argb: '0000FF' }, underline: true };
-        });
+      const linkHeaders = [
+        '№',
+        'Филиал',
+        'Бемор (Пациент)',
+        'Телефон',
+        'Тип',
+        'Карточка пациента',
+        'Вложения',
+      ];
+      const lRow = linksSheet.addRow(linkHeaders);
+      lRow.eachCell((c) => {
+        c.fill = fillStyle(C_GRAY);
+        c.font = { bold: true };
+        c.border = borderStyle;
+        c.alignment = alignCenter;
       });
 
-      // @ts-ignore
-      const endRow = linksSheet.lastRow.number;
-      if (endRow > startRow) {
-        linksSheet.mergeCells(startRow, 2, endRow, 2);
-      }
-    });
+      let linkIndex = 1;
+      branchList.forEach((branch) => {
+        const bReqs = requests.filter(
+          (r) =>
+            r.branch === branch &&
+            [
+              RequestStatus.FEEDBACK_NEGATIVE,
+              RequestStatus.FEEDBACK_POSITIVE,
+              RequestStatus.FEEDBACK_NOT_RELATED,
+            ].includes(r.status),
+        );
+        const itemsToPrint = bReqs.filter(
+          (r) =>
+            r.feedback?.trelloUrl ||
+            (r.feedback?.evidenceMessages &&
+              r.feedback.evidenceMessages.length > 0),
+        );
 
-    linksSheet.columns.forEach((c, i) => {
-      if (i === 0) c.width = 6;
-      else if (i === 1) c.width = 20;
-      else if (i === 2) c.width = 30;
-      else if (i === 3) c.width = 20;
-      else if (i === 4) c.width = 25;
-      else c.width = 25;
-    });
+        if (itemsToPrint.length === 0) return;
 
-    // ==========================================
-    // 4. ВКЛАДКА 3: ОШИБКИ ИМПОРТА
-    // ==========================================
-    const errorSheet = workbook.addWorksheet('Импорт хатоликлари (Ошибки)');
-    const totalErrors = errorsLog.length;
+        // @ts-ignore
+        const startRow = linksSheet.lastRow.number + 1;
+        itemsToPrint.forEach((req) => {
+          let typeStr = 'Жалоба (Шикоят)';
+          if (req.status === RequestStatus.FEEDBACK_POSITIVE)
+            typeStr = 'Предложение (Таклиф)';
+          else if (req.status === RequestStatus.FEEDBACK_NOT_RELATED)
+            typeStr = 'Другое (Клиникага тегишли эмас)';
 
-    errorSheet.addRow(['ИМПОРТ ҚИЛИШДАГИ ХАТОЛИКЛАР СТАТИСТИКАСИ']);
-    errorSheet.mergeCells('A1:C1');
-    errorSheet.getCell('A1').font = { bold: true, size: 12 };
-    errorSheet.getCell('A1').alignment = { horizontal: 'center' };
+          const frontendUrl =
+            process.env.FRONTEND_URL ||
+            'https://orzu-medical-orm-2-1-frontend.vercel.app';
+          const profileUrl = new URL(
+            `/patients/${req.patientId}`,
+            frontendUrl,
+          ).toString();
+          const profileCell = {
+            text: 'Открыть в CRM',
+            hyperlink: profileUrl,
+          };
+          const mediaCount =
+            req.feedback?.evidenceMessages?.filter((e) => e.mediaUrl).length ||
+            0;
+          const mediaCell = mediaCount
+            ? { text: `Файлов: ${mediaCount}`, hyperlink: profileUrl }
+            : '-';
 
-    errorSheet.addRow([
-      'Хатолик тури (Категория)',
-      'Сони (Кол-во)',
-      'Улуши (%)',
-    ]);
-    // @ts-ignore
-    errorSheet.lastRow.font = { bold: true };
-    // @ts-ignore
-    errorSheet.lastRow.eachCell((c) => {
-      c.fill = fillStyle(C_GRAY);
-      c.border = borderStyle;
-    });
+          const row = linksSheet.addRow([
+            linkIndex++,
+            branch,
+            req.patient?.name || '-',
+            req.patient?.phone || '-',
+            typeStr,
+            profileCell,
+            mediaCell,
+          ]);
 
-    const categoryCounts: Record<string, number> = {};
-    errorsLog.forEach((e) => {
-      categoryCounts[e.category] = (categoryCounts[e.category] || 0) + 1;
-    });
+          row.eachCell({ includeEmpty: true }, (c, colNum) => {
+            c.border = borderStyle;
+            c.alignment = alignCenter;
+            if ((colNum === 6 || colNum === 7) && c.value !== '-')
+              c.font = { color: { argb: '0000FF' }, underline: true };
+          });
+        });
 
-    Object.keys(ERROR_CATEGORIES_MAPPING).forEach((cat) => {
-      const count = categoryCounts[cat] || 0;
-      const row = errorSheet.addRow([
-        ERROR_CATEGORIES_MAPPING[cat as keyof typeof ERROR_CATEGORIES_MAPPING],
-        count,
-        totalErrors ? count / totalErrors : 0,
+        // @ts-ignore
+        const endRow = linksSheet.lastRow.number;
+        if (endRow > startRow) {
+          linksSheet.mergeCells(startRow, 2, endRow, 2);
+        }
+      });
+
+      linksSheet.columns.forEach((c, i) => {
+        if (i === 0) c.width = 6;
+        else if (i === 1) c.width = 20;
+        else if (i === 2) c.width = 30;
+        else if (i === 3) c.width = 20;
+        else if (i === 4) c.width = 25;
+        else c.width = 25;
+      });
+
+      // ==========================================
+      // 4. ВКЛАДКА 3: ОШИБКИ ИМПОРТА
+      // ==========================================
+      const errorSheet = workbook.addWorksheet('Импорт хатоликлари (Ошибки)');
+      const totalErrors = errorsLog.length;
+
+      errorSheet.addRow(['ИМПОРТ ҚИЛИШДАГИ ХАТОЛИКЛАР СТАТИСТИКАСИ']);
+      errorSheet.mergeCells('A1:C1');
+      errorSheet.getCell('A1').font = { bold: true, size: 12 };
+      errorSheet.getCell('A1').alignment = { horizontal: 'center' };
+
+      errorSheet.addRow([
+        'Хатолик тури (Категория)',
+        'Сони (Кол-во)',
+        'Улуши (%)',
       ]);
-      row.getCell(3).numFmt = '0.0%';
-      row.eachCell((c) => (c.border = borderStyle));
-    });
-
-    const errTotalRow = errorSheet.addRow(['ЖАМИ (ИТОГО)', totalErrors, 1]);
-    errTotalRow.font = { bold: true };
-    errTotalRow.getCell(3).numFmt = '0.0%';
-    errTotalRow.eachCell((c) => (c.border = borderStyle));
-
-    errorSheet.addRow([]);
-
-    errorSheet.addRow([
-      'ХАТОЛИКЛАР СТАТИСТИКАСИ ФИЛИАЛЛАР БЎЙИЧА (Статистика по филиалам)',
-    ]);
-    errorSheet.mergeCells(
       // @ts-ignore
-      `A${errorSheet.lastRow.number}:C${errorSheet.lastRow.number}`,
-    );
-    // @ts-ignore
-    errorSheet.lastRow.font = { bold: true, size: 12 };
-    // @ts-ignore
-    errorSheet.lastRow.alignment = { horizontal: 'center' };
+      errorSheet.lastRow.font = { bold: true };
+      // @ts-ignore
+      errorSheet.lastRow.eachCell((c) => {
+        c.fill = fillStyle(C_GRAY);
+        c.border = borderStyle;
+      });
 
-    errorSheet.addRow(['Филиал', 'Сони (Кол-во)', 'Улуши (%)']);
-    // @ts-ignore
-    errorSheet.lastRow.font = { bold: true };
-    // @ts-ignore
-    errorSheet.lastRow.eachCell((c) => {
-      c.fill = fillStyle(C_GRAY);
-      c.border = borderStyle;
-    });
+      const categoryCounts: Record<string, number> = {};
+      errorsLog.forEach((e) => {
+        categoryCounts[e.category] = (categoryCounts[e.category] || 0) + 1;
+      });
 
-    branchList.forEach((branch) => {
-      const branchErrorCount = errorsLog.filter(
-        (e) => e.branch === branch,
-      ).length;
-      if (branchErrorCount > 0) {
+      Object.keys(ERROR_CATEGORIES_MAPPING).forEach((cat) => {
+        const count = categoryCounts[cat] || 0;
         const row = errorSheet.addRow([
-          branch,
-          branchErrorCount,
-          totalErrors ? branchErrorCount / totalErrors : 0,
+          ERROR_CATEGORIES_MAPPING[
+            cat as keyof typeof ERROR_CATEGORIES_MAPPING
+          ],
+          count,
+          totalErrors ? count / totalErrors : 0,
         ]);
         row.getCell(3).numFmt = '0.0%';
         row.eachCell((c) => (c.border = borderStyle));
-      }
-    });
-
-    errorSheet.addRow([]);
-
-    errorSheet.addRow([
-      'ХАТОЛИКЛАР ТАФСИЛОТИ (Детализация ошибок по филиалам)',
-    ]);
-    errorSheet.mergeCells(
-      // @ts-ignore
-      `A${errorSheet.lastRow.number}:H${errorSheet.lastRow.number}`,
-    );
-    // @ts-ignore
-    errorSheet.lastRow.font = { bold: true, size: 12 };
-    // @ts-ignore
-    errorSheet.lastRow.alignment = { horizontal: 'center' };
-
-    const detRow = errorSheet.addRow([
-      '№',
-      'Келган сана',
-      'Юкланган сана',
-      'Қатор (Excel)',
-      'Ф.И.Ш (Имя)',
-      'Телефон',
-      'Филиал',
-      'Изох (Ошибка)',
-    ]);
-    detRow.font = { bold: true };
-    detRow.eachCell((c) => {
-      c.fill = fillStyle(C_GRAY);
-      c.border = borderStyle;
-      c.alignment = alignCenter;
-    });
-
-    let errorIndex = 1;
-    branchList.forEach((branch) => {
-      const branchErrors = errorsLog.filter((e) => e.branch === branch);
-      if (branchErrors.length === 0) return;
-
-      const titleRow = errorSheet.addRow([`ФИЛИАЛ: ${branch.toUpperCase()}`]);
-      titleRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-      titleRow.fill = {
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: 'FF1F4E78' },
-      };
-      // @ts-ignore
-      errorSheet.mergeCells(`A${titleRow.number}:H${titleRow.number}`);
-      titleRow.alignment = { horizontal: 'center' };
-
-      branchErrors.forEach((e) => {
-        const mappedCategory =
-          ERROR_CATEGORIES_MAPPING[
-            e.category as keyof typeof ERROR_CATEGORIES_MAPPING
-          ] || e.category;
-        const row = errorSheet.addRow([
-          errorIndex++,
-          format(e.arrivalDate, 'dd.MM.yyyy'),
-          format(e.createdAt, 'dd.MM.yyyy HH:mm'),
-          e.lineNumber,
-          e.name || '-',
-          e.phone || '-',
-          e.branch || '-',
-          `[${mappedCategory}] - ${e.errorMessages.join('; ')}`,
-        ]);
-        row.eachCell((c) => (c.border = borderStyle));
       });
-    });
 
-    errorSheet.columns.forEach((c, i) => {
-      if (i === 0) c.width = 6;
-      else if (i === 1 || i === 2) c.width = 20;
-      else if (i === 4) c.width = 30;
-      else if (i === 5) c.width = 20;
-      else if (i === 6) c.width = 25;
-      else if (i === 7) c.width = 70;
-      else c.width = 15;
-    });
+      const errTotalRow = errorSheet.addRow(['ЖАМИ (ИТОГО)', totalErrors, 1]);
+      errTotalRow.font = { bold: true };
+      errTotalRow.getCell(3).numFmt = '0.0%';
+      errTotalRow.eachCell((c) => (c.border = borderStyle));
+
+      errorSheet.addRow([]);
+
+      errorSheet.addRow([
+        'ХАТОЛИКЛАР СТАТИСТИКАСИ ФИЛИАЛЛАР БЎЙИЧА (Статистика по филиалам)',
+      ]);
+      errorSheet.mergeCells(
+        // @ts-ignore
+        `A${errorSheet.lastRow.number}:C${errorSheet.lastRow.number}`,
+      );
+      // @ts-ignore
+      errorSheet.lastRow.font = { bold: true, size: 12 };
+      // @ts-ignore
+      errorSheet.lastRow.alignment = { horizontal: 'center' };
+
+      errorSheet.addRow(['Филиал', 'Сони (Кол-во)', 'Улуши (%)']);
+      // @ts-ignore
+      errorSheet.lastRow.font = { bold: true };
+      // @ts-ignore
+      errorSheet.lastRow.eachCell((c) => {
+        c.fill = fillStyle(C_GRAY);
+        c.border = borderStyle;
+      });
+
+      branchList.forEach((branch) => {
+        const branchErrorCount = errorsLog.filter(
+          (e) => e.branch === branch,
+        ).length;
+        if (branchErrorCount > 0) {
+          const row = errorSheet.addRow([
+            branch,
+            branchErrorCount,
+            totalErrors ? branchErrorCount / totalErrors : 0,
+          ]);
+          row.getCell(3).numFmt = '0.0%';
+          row.eachCell((c) => (c.border = borderStyle));
+        }
+      });
+
+      errorSheet.addRow([]);
+
+      errorSheet.addRow([
+        'ХАТОЛИКЛАР ТАФСИЛОТИ (Детализация ошибок по филиалам)',
+      ]);
+      errorSheet.mergeCells(
+        // @ts-ignore
+        `A${errorSheet.lastRow.number}:H${errorSheet.lastRow.number}`,
+      );
+      // @ts-ignore
+      errorSheet.lastRow.font = { bold: true, size: 12 };
+      // @ts-ignore
+      errorSheet.lastRow.alignment = { horizontal: 'center' };
+
+      const detRow = errorSheet.addRow([
+        '№',
+        'Келган сана',
+        'Юкланган сана',
+        'Қатор (Excel)',
+        'Ф.И.Ш (Имя)',
+        'Телефон',
+        'Филиал',
+        'Изох (Ошибка)',
+      ]);
+      detRow.font = { bold: true };
+      detRow.eachCell((c) => {
+        c.fill = fillStyle(C_GRAY);
+        c.border = borderStyle;
+        c.alignment = alignCenter;
+      });
+
+      let errorIndex = 1;
+      branchList.forEach((branch) => {
+        const branchErrors = errorsLog.filter((e) => e.branch === branch);
+        if (branchErrors.length === 0) return;
+
+        const titleRow = errorSheet.addRow([`ФИЛИАЛ: ${branch.toUpperCase()}`]);
+        titleRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        titleRow.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FF1F4E78' },
+        };
+        // @ts-ignore
+        errorSheet.mergeCells(`A${titleRow.number}:H${titleRow.number}`);
+        titleRow.alignment = { horizontal: 'center' };
+
+        branchErrors.forEach((e) => {
+          const mappedCategory =
+            ERROR_CATEGORIES_MAPPING[
+              e.category as keyof typeof ERROR_CATEGORIES_MAPPING
+            ] || e.category;
+          const row = errorSheet.addRow([
+            errorIndex++,
+            format(e.arrivalDate, 'dd.MM.yyyy'),
+            format(e.createdAt, 'dd.MM.yyyy HH:mm'),
+            e.lineNumber,
+            e.name || '-',
+            e.phone || '-',
+            e.branch || '-',
+            `[${mappedCategory}] - ${e.errorMessages.join('; ')}`,
+          ]);
+          row.eachCell((c) => (c.border = borderStyle));
+        });
+      });
+
+      errorSheet.columns.forEach((c, i) => {
+        if (i === 0) c.width = 6;
+        else if (i === 1 || i === 2) c.width = 20;
+        else if (i === 4) c.width = 30;
+        else if (i === 5) c.width = 20;
+        else if (i === 6) c.width = 25;
+        else if (i === 7) c.width = 70;
+        else c.width = 15;
+      });
+    }
 
     // ==========================================
     // 5. СОХРАНЕНИЕ ФАЙЛА
@@ -650,19 +678,17 @@ export class ReportsService {
 
     const fileName = `Отчет_${format(start, 'dd.MM.yyyy')}-${format(end, 'dd.MM.yyyy')}_${Date.now()}.xlsx`;
     const uploadDir = path.join(process.cwd(), 'uploads', 'reports');
-    await fs.mkdir(uploadDir, { recursive: true });
+    await fs.mkdir(uploadDir, { recursive: true, mode: 0o700 });
 
     const filePath = path.join(uploadDir, fileName);
-    await fs.writeFile(filePath, buffer);
+    await fs.writeFile(filePath, buffer, { mode: 0o600 });
 
-    const backendUrl =
-      process.env.UPLOAD_URL ||
-      process.env.BACKEND_URL ||
-      'http://localhost:3000';
+    const id = randomUUID();
     return this.reportRepository.save(
       this.reportRepository.create({
+        id,
         name: fileName,
-        fileUrl: `${backendUrl}/uploads/reports/${fileName}`,
+        fileUrl: `/api/reports/${id}/download`,
         startDate: start,
         endDate: end,
         status: 'ready',
@@ -674,10 +700,9 @@ export class ReportsService {
     const report = await this.reportRepository.findOne({ where: { id } });
     if (report) {
       try {
-        const fileName = report.fileUrl.split('/').pop();
-        if (fileName) {
+        if (path.basename(report.name) === report.name) {
           await fs.unlink(
-            path.join(process.cwd(), 'uploads', 'reports', fileName),
+            path.join(process.cwd(), 'uploads', 'reports', report.name),
           );
         }
       } catch (e: any) {

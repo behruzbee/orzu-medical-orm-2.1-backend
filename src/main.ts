@@ -2,7 +2,6 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import * as path from 'path';
 import { json, urlencoded } from 'express';
 import { runSeed } from './seed';
 import { setupSwagger } from './swagger';
@@ -35,11 +34,6 @@ async function bootstrap() {
     credentials: true,
   });
 
-  const uploadsPath = path.join(__dirname, '..', 'uploads');
-  app.useStaticAssets(uploadsPath, {
-    prefix: '/uploads/',
-  });
-
   setupSwagger(app);
 
   try {
@@ -52,6 +46,5 @@ async function bootstrap() {
 
   logger.log(`🚀 Application is running on: http://localhost:${port}/api`);
   logger.log(`📘 Swagger docs: http://localhost:${port}/api/docs`);
-  logger.log(`📂 Serving static files from: ${uploadsPath}`);
 }
 bootstrap();

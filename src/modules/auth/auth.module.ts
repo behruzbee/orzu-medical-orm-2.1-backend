@@ -6,22 +6,20 @@ import { PassportModule } from '@nestjs/passport';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
-import { QrAuthStrategy } from './strategies/qr-auth.strategy';
 
 import { UsersModule } from '../users/users.module';
-import { WhatsappModule } from '../whatsapp/whatsapp.module';
 import { PinAuthStrategy } from './strategies/pin-auth.strategy';
+import { getJwtSecret } from 'src/common/utils/jwt-secret.util';
 
 @Module({
   imports: [
     UsersModule,
-    WhatsappModule,
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService): JwtModuleOptions => {
-        const secret = config.get<string>('JWT_SECRET') || 'default_secret_key';
+        const secret = getJwtSecret(config);
         const expiresIn = config.get<string>('JWT_EXPIRES_IN') || '1d';
         return {
           secret,
@@ -33,7 +31,7 @@ import { PinAuthStrategy } from './strategies/pin-auth.strategy';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, PinAuthStrategy, QrAuthStrategy],
+  providers: [AuthService, JwtStrategy, PinAuthStrategy],
   exports: [AuthService],
 })
 export class AuthModule {}

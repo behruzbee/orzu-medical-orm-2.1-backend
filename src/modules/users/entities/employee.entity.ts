@@ -1,4 +1,9 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn } from 'typeorm';
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  CreateDateColumn,
+} from 'typeorm';
 
 @Entity('employees')
 export class Employee {
@@ -11,8 +16,11 @@ export class Employee {
   @Column({ unique: true })
   phone: string;
 
-  @Column({ nullable: true }) 
-  pin: string; 
+  @Column({ nullable: true, select: false })
+  pin: string;
+
+  @Column({ default: 0 })
+  tokenVersion: number;
 
   @Column({ default: 'operator' })
   role: string;

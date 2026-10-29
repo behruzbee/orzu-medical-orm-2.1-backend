@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsNotEmpty, IsString } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsBoolean, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class GenerateReportDto {
   @ApiProperty({ example: '2026-06-01' })
@@ -11,4 +11,12 @@ export class GenerateReportDto {
   @IsNotEmpty()
   @IsString()
   endDate: string;
+
+  @ApiPropertyOptional({
+    description: 'Include patient names, phone numbers and attachment links.',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  includePersonalData?: boolean;
 }

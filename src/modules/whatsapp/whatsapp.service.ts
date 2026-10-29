@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import * as os from 'os';
 import { Client, LocalAuth, MessageMedia } from 'whatsapp-web.js';
-import { Subject, Observable } from 'rxjs';
+import { Subject } from 'rxjs';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
@@ -23,7 +23,7 @@ export class WhatsappService implements OnModuleInit {
   private hasStartBeenRequested = false;
   private readonly logger = new Logger(WhatsappService.name);
 
-  private qrSubject = new Subject<{ qr: string }>();
+  private latestQr: string | null = null;
   private statusSubject = new Subject<{ status: string; user?: any }>();
 
   constructor(
@@ -85,23 +85,26 @@ export class WhatsappService implements OnModuleInit {
 
   private initializeClientEvents(client: Client) {
     client.on('qr', (qr) => {
+      this.latestQr = qr;
       this.logger.log('New QR Code generated');
-      this.qrSubject.next({ qr });
     });
 
     client.on('ready', () => {
+      this.latestQr = null;
       this.isReady = true;
       this.logger.log('WhatsApp Client is Ready!');
       this.statusSubject.next({ status: 'connected' });
     });
 
     client.on('auth_failure', (message) => {
+      this.latestQr = null;
       this.isReady = false;
       this.logger.error(`WhatsApp auth failure: ${message}`);
       this.statusSubject.next({ status: 'auth_failure' });
     });
 
     client.on('disconnected', () => {
+      this.latestQr = null;
       this.isReady = false;
       this.logger.warn('WhatsApp disconnected');
       this.statusSubject.next({ status: 'disconnected' });
@@ -172,9 +175,11 @@ export class WhatsappService implements OnModuleInit {
     }
   }
 
-  getQrStream(): Observable<{ qr: string }> {
-    void this.startClient('qr-stream').catch(() => undefined);
-    return this.qrSubject.asObservable();
+  getQrStatus() {
+    if (!this.isSessionActive()) {
+      void this.startClient('admin-qr-status').catch(() => undefined);
+    }
+    return { connected: this.isSessionActive(), qr: this.latestQr };
   }
 
   getCurrentUserPhone(): string | null {

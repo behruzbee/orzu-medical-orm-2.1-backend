@@ -22,6 +22,8 @@ import { CreateSubcategoryDto } from './dto/create-subcategory.dto';
 import { AnalyticsQueryDto } from './dto/analytics-query.dto';
 
 @ApiTags('Feedbacks')
+@ApiBearerAuth('jwt')
+@UseGuards(AuthGuard('jwt'))
 @Controller('feedbacks')
 export class FeedbacksController {
   constructor(private readonly feedbacksService: FeedbacksService) {}
@@ -70,6 +72,7 @@ export class FeedbacksController {
   }
 
   @Get('evidence/:id/file')
+  @ApiBearerAuth('jwt')
   @ApiOperation({ summary: 'Get evidence media file' })
   async getFile(@Param('id') id: string, @Res({ passthrough: true }) res) {
     const evidence = await this.feedbacksService.getEvidenceFile(id);
@@ -99,7 +102,8 @@ export class FeedbacksController {
     res.set({
       'Content-Type': evidence.mimeType || 'application/octet-stream',
       'Content-Disposition': `inline; filename="evidence-${id}.${ext}"`,
-      'Cache-Control': 'public, max-age=2592000',
+      'Cache-Control': 'no-store, private',
+      'X-Content-Type-Options': 'nosniff',
     });
 
     return new StreamableFile(evidence.mediaData);

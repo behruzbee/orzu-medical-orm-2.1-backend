@@ -21,9 +21,10 @@ import {
   ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
-import { map, Observable } from 'rxjs';
+import { defer, map, Observable, switchMap } from 'rxjs';
 import { CreateDoctorMessageDto } from './dto/create-doctor-message.dto';
 import { DoctorMessagesService } from './doctor-messages.service';
+import { UsersService } from 'src/modules/users/users.service';
 
 @ApiTags('Doctor messages')
 @Controller('doctor-messages')
@@ -31,6 +32,7 @@ export class DoctorMessagesController {
   constructor(
     private readonly doctorMessagesService: DoctorMessagesService,
     private readonly jwtService: JwtService,
+    private readonly usersService: UsersService,
   ) {}
 
   @Post(':requestId')
@@ -80,10 +82,18 @@ export class DoctorMessagesController {
   @ApiOperation({ summary: 'Stream doctor message events' })
   @ApiQuery({ name: 'token', required: true })
   stream(@Query('token') token?: string): Observable<MessageEvent> {
-    const user = this.verifyStreamToken(token);
-    this.ensureDoctorAccess(user);
-
-    return this.doctorMessagesService.stream().pipe(map((data) => ({ data })));
+    return defer(async () => {
+      const payload = this.verifyStreamToken(token);
+      const user = await this.usersService.findActiveById(payload.id);
+      if (!user || payload.tokenVersion !== user.tokenVersion) {
+        throw new UnauthorizedException('Invalid token');
+      }
+      this.ensureDoctorAccess(user);
+      return user;
+    }).pipe(
+      switchMap(() => this.doctorMessagesService.stream()),
+      map((data) => ({ data })),
+    );
   }
 
   private verifyStreamToken(token?: string) {
@@ -95,8 +105,7 @@ export class DoctorMessagesController {
       const payload = this.jwtService.verify(token);
       return {
         id: payload.sub,
-        phone: payload.phone,
-        role: payload.role,
+        tokenVersion: payload.tokenVersion ?? 0,
       };
     } catch {
       throw new UnauthorizedException('Invalid token');
