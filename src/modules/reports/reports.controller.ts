@@ -35,6 +35,15 @@ export class ReportsController {
     return this.reportsService.generateReport(dto);
   }
 
+  @Post(':id/regenerate')
+  @ApiOperation({
+    summary:
+      'Recreate a missing report from current data, retaining its original history',
+  })
+  regenerate(@Param('id') id: string) {
+    return this.reportsService.regenerateReport(id);
+  }
+
   @Get(':id/download')
   @ApiOperation({ summary: 'Download a generated report' })
   async download(

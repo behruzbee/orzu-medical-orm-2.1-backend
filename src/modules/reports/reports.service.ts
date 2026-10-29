@@ -1,6 +1,11 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Like, Repository } from 'typeorm';
 import * as ExcelJS from 'exceljs';
 import { format } from 'date-fns';
 import * as fs from 'fs/promises';
@@ -31,6 +36,7 @@ const ERROR_CATEGORIES_MAPPING = {
 @Injectable()
 export class ReportsService {
   private readonly logger = new Logger(ReportsService.name);
+  private readonly regenerations = new Map<string, Promise<Report>>();
 
   constructor(
     @InjectRepository(Report)
@@ -42,10 +48,62 @@ export class ReportsService {
     const reports = await this.reportRepository.find({
       order: { createdAt: 'DESC' },
     });
+    let files: Set<string>;
+    try {
+      files = new Set(
+        await fs.readdir(path.join(process.cwd(), 'uploads', 'reports')),
+      );
+    } catch (error: any) {
+      if (error.code !== 'ENOENT') throw error;
+      files = new Set();
+    }
     return reports.map((report) => ({
       ...report,
+      status: files.has(report.name) ? report.status : 'missing',
+      fileAvailable: files.has(report.name),
       fileUrl: `/api/reports/${report.id}/download`,
     }));
+  }
+
+  async regenerateReport(id: string): Promise<Report> {
+    const pending = this.regenerations.get(id);
+    if (pending) return pending;
+    const job = this.regenerateMissingReport(id);
+    this.regenerations.set(id, job);
+    try {
+      return await job;
+    } finally {
+      this.regenerations.delete(id);
+    }
+  }
+
+  private async regenerateMissingReport(id: string): Promise<Report> {
+    const source = await this.reportRepository.findOne({ where: { id } });
+    if (!source || path.basename(source.name) !== source.name) {
+      throw new NotFoundException('Report not found');
+    }
+    const files = await this.findAll();
+    if (files.find((report) => report.id === id)?.fileAvailable) {
+      throw new ConflictException('Original report file is available');
+    }
+    const previous = await this.reportRepository.findOne({
+      where: { name: Like(`Recreated_${source.id}_%`), status: 'recreated' },
+      order: { createdAt: 'DESC' },
+    });
+    if (
+      previous &&
+      files.find((report) => report.id === previous.id)?.fileAvailable
+    ) {
+      return previous;
+    }
+    return this.generateReport(
+      {
+        startDate: source.startDate.toISOString().slice(0, 10),
+        endDate: source.endDate.toISOString().slice(0, 10),
+        includePersonalData: false,
+      },
+      source,
+    );
   }
 
   async openReport(id: string) {
@@ -67,7 +125,7 @@ export class ReportsService {
     return { name: report.name, stream: createReadStream(filePath) };
   }
 
-  async generateReport(dto: GenerateReportDto) {
+  async generateReport(dto: GenerateReportDto, sourceReport?: Report) {
     const reportData = await this.reportStatsService.loadReportData(dto, {
       includeReportRelations: dto.includePersonalData === true,
     });
@@ -306,7 +364,8 @@ export class ReportsService {
       rowValues[75] = branchStats.feedback.complaints.ratio || 0;
       rowValues[76] = branchStats.feedback.suggestions.count;
       rowValues[77] = branchStats.feedback.notRelatedComplaints.count;
-      rowValues[78] = dto.includePersonalData === true ? 'Вкладка "Ссылки"' : '';
+      rowValues[78] =
+        dto.includePersonalData === true ? 'Вкладка "Ссылки"' : '';
 
       const row = worksheet.addRow(rowValues.slice(1));
 
@@ -673,10 +732,31 @@ export class ReportsService {
     // ==========================================
     // 5. СОХРАНЕНИЕ ФАЙЛА
     // ==========================================
+    if (sourceReport) {
+      const provenance = workbook.addWorksheet('Пересоздание');
+      provenance.addRows([
+        [
+          'Статус',
+          'Пересоздан из текущей базы. Не является оригинальным историческим файлом.',
+        ],
+        ['Исходный отчёт', sourceReport.id],
+        ['Исходное имя файла', sourceReport.name],
+        ['Исходная дата создания (UTC)', sourceReport.createdAt.toISOString()],
+        ['Дата пересоздания (UTC)', new Date().toISOString()],
+        ['Период', `${dto.startDate} - ${dto.endDate}`],
+        ['Персональные данные', 'Не включены'],
+      ]);
+      provenance.getColumn(1).width = 34;
+      provenance.getColumn(2).width = 100;
+      provenance.getColumn(2).alignment = { wrapText: true };
+      provenance.getRow(1).height = 36;
+    }
     const uint8Array = await workbook.xlsx.writeBuffer();
     const buffer = Buffer.from(uint8Array);
 
-    const fileName = `Отчет_${format(start, 'dd.MM.yyyy')}-${format(end, 'dd.MM.yyyy')}_${Date.now()}.xlsx`;
+    const fileName = sourceReport
+      ? `Recreated_${sourceReport.id}_${Date.now()}.xlsx`
+      : `Отчет_${format(start, 'dd.MM.yyyy')}-${format(end, 'dd.MM.yyyy')}_${Date.now()}.xlsx`;
     const uploadDir = path.join(process.cwd(), 'uploads', 'reports');
     await fs.mkdir(uploadDir, { recursive: true, mode: 0o700 });
 
@@ -691,7 +771,7 @@ export class ReportsService {
         fileUrl: `/api/reports/${id}/download`,
         startDate: start,
         endDate: end,
-        status: 'ready',
+        status: sourceReport ? 'recreated' : 'ready',
       }),
     );
   }
