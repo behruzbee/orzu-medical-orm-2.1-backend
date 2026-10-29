@@ -19,6 +19,7 @@ import {
 } from './entities/evidence-message.entity';
 import { CreateFeedbackDto } from './dto/create-feedback.dto';
 import { TrelloService } from '../trello/services/trello.service';
+import { patientRequestUrl, trelloEvidenceText } from './trello-links';
 import { FeedbackSubcategory } from './entities/feedback-subcategory.entity';
 import { CreateSubcategoryDto } from './dto/create-subcategory.dto';
 import { formatBranchName } from 'src/common/utils/branch.util';
@@ -297,10 +298,16 @@ export class FeedbacksService implements OnModuleInit {
             processedEvidence
               .map(
                 (e, index) =>
-                  `${index + 1}. Файл или сообщения: ${e.mediaUrl || e.text}`,
+                  `${index + 1}. Файл или сообщения: ${trelloEvidenceText(e)}`,
               )
               .join('\n');
         }
+
+        const requestUrl = patientRequestUrl(
+          this.configService.get<string>('FRONTEND_URL') ||
+            'https://orzu-medical-orm-2-1-frontend.vercel.app',
+          request.id,
+        );
 
         const dateStr = new Date().toLocaleString('ru-RU', {
           timeZone: 'Asia/Tashkent',
@@ -337,6 +344,7 @@ export class FeedbacksService implements OnModuleInit {
 ${dto.comment || 'К заявке не оставлен комментарий.'}${evidenceText}${ratingsText}
 
 📅 Дата отправки: ${dateStr}
+🔗 Обращение и вложения: ${requestUrl}
 🆔 FeedbackID: ${savedFeedback.id}`;
 
         const boardId = this.configService.get<string>('TRELLO_BOARD_ID');

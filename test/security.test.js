@@ -22,6 +22,20 @@ const { AppModule } = require('../src/app.module');
 const { TrelloModule } = require('../src/modules/trello/trello.module');
 const { PatientsModule } = require('../src/modules/patients/patients.module');
 const { IntegrationController } = require('../src/modules/patients/integration.controller');
+const { patientRequestUrl, trelloEvidenceText } = require('../src/modules/feedbacks/trello-links');
+
+test('Trello links open authenticated requests instead of direct evidence files', () => {
+  const evidenceId = 'b8d71a7e-0e41-4dd8-aed3-c4761b70b4d8';
+  assert.equal(
+    trelloEvidenceText({ mediaUrl: `https://old.example/api/feedbacks/evidence/${evidenceId}/file` }),
+    'Вложение доступно в обращении',
+  );
+  assert.equal(trelloEvidenceText({ text: 'Сообщение пациента' }), 'Сообщение пациента');
+  assert.equal(
+    patientRequestUrl('https://crm.example/', 'request-1'),
+    'https://crm.example/patients/request-1',
+  );
+});
 
 test('only Trello remains connected while BI API stays available', () => {
   const imports = Reflect.getMetadata(MODULE_METADATA.IMPORTS, AppModule);
