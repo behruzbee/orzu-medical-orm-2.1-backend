@@ -26,7 +26,8 @@ async function bootstrap() {
 
   app.enableCors({
     origin: [
-      'https://orzu-medical-orm-2-1-frontend.vercel.app',
+      process.env.FRONTEND_URL ||
+        'https://orzu-medical-orm-2-1-frontend.vercel.app',
       'http://localhost:5173',
       'http://localhost:3000',
     ],
