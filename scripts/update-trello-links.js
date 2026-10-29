@@ -75,6 +75,7 @@ async function main() {
       env.FRONTEND_URL,
     ).toString();
     const oldLinks = card.desc.match(legacyEvidenceUrl)?.length || 0;
+    if (oldLinks === 0 && !requestLinkLine.test(card.desc)) continue;
     let desc = card.desc.replace(legacyEvidenceUrl, 'Вложение доступно в обращении');
     const line = `🔗 Обращение и вложения: ${requestUrl}`;
     desc = requestLinkLine.test(desc)
