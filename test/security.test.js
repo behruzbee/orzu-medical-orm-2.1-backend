@@ -2,7 +2,7 @@ require('reflect-metadata');
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { GUARDS_METADATA } = require('@nestjs/common/constants');
+const { GUARDS_METADATA, MODULE_METADATA } = require('@nestjs/common/constants');
 const { AdminGuard } = require('../src/common/guards/admin.guard');
 const { hashPin, verifyPin } = require('../src/common/utils/pin.util');
 const { PinAuthStrategy } = require('../src/modules/auth/strategies/pin-auth.strategy');
@@ -18,6 +18,21 @@ const {
 const ExcelJS = require('exceljs');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { AppModule } = require('../src/app.module');
+const { TrelloModule } = require('../src/modules/trello/trello.module');
+const { PatientsModule } = require('../src/modules/patients/patients.module');
+const { IntegrationController } = require('../src/modules/patients/integration.controller');
+
+test('only Trello remains connected while BI API stays available', () => {
+  const imports = Reflect.getMetadata(MODULE_METADATA.IMPORTS, AppModule);
+  assert.ok(imports.includes(TrelloModule));
+  assert.ok(imports.includes(PatientsModule));
+  assert.equal(imports.some((module) => /Whatsapp|Telegram/.test(module.name)), false);
+  const trelloImports = Reflect.getMetadata(MODULE_METADATA.IMPORTS, TrelloModule) || [];
+  assert.equal(trelloImports.some((module) => /Whatsapp|Telegram/.test(module.name)), false);
+  const patientControllers = Reflect.getMetadata(MODULE_METADATA.CONTROLLERS, PatientsModule);
+  assert.ok(patientControllers.includes(IntegrationController));
+});
 
 test('bulk reports require JWT and administrator role', () => {
   const guards = Reflect.getMetadata(GUARDS_METADATA, ReportsController);

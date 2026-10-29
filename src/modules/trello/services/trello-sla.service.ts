@@ -2,7 +2,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import { TrelloService } from './trello.service';
-import { TelegramService } from 'src/modules/telegram/telegram.service';
 
 @Injectable()
 export class TrelloSlaService {
@@ -11,7 +10,6 @@ export class TrelloSlaService {
   constructor(
     private readonly configService: ConfigService,
     private readonly trelloService: TrelloService,
-    private readonly telegramService: TelegramService,
   ) {}
 
   // Запускаем каждый час в 00 минут
@@ -60,9 +58,6 @@ export class TrelloSlaService {
             await this.trelloService.addLabelToCard(card.id, overdueLabelId);
           }
 
-          // 2. Отправляем уведомление в Telegram бот
-          const overtimeText = `${Math.floor(diffHours)} соат (лимит: ${config.limitHours} соат)`;
-          await this.telegramService.sendDeadlineAlert(card.name, card.shortUrl, config.name, overtimeText);
         }
       }
     }

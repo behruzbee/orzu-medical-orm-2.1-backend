@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 import axios from 'axios';
 import { RequestStatus } from 'src/common/enums/request-status.enum';
-import { TelegramService } from 'src/modules/telegram/telegram.service';
 import { Feedback } from 'src/modules/feedbacks/entities/feedback.entity';
 
 interface PositionRoute {
@@ -39,7 +38,6 @@ export class TrelloService implements OnModuleInit {
 
   constructor(
     private configService: ConfigService,
-    private telegramService: TelegramService,
     private dataSource: DataSource,
   ) {
     this.apiKey = this.configService.get<string>('TRELLO_API_KEY');
@@ -435,7 +433,6 @@ export class TrelloService implements OnModuleInit {
     const listAfterName = action.data.listAfter.name;
 
     const memberUsername = action.memberCreator.username;
-    const memberFullName = action.memberCreator.fullName;
 
     const resolvedListId = this.configService.get('TRELLO_LIST_RESOLVED');
     const unresolvedListId = this.configService.get('TRELLO_LIST_UNRESOLVED');
@@ -458,11 +455,6 @@ export class TrelloService implements OnModuleInit {
       );
       try {
         await this.moveCard(cardId, listBeforeId);
-        await this.telegramService.sendSecurityAlert(
-          memberFullName,
-          cardName,
-          listAfterName,
-        );
       } catch (error) {
         this.logger.error(
           `Ошибка при возврате карточки обратно: ${error.message}`,

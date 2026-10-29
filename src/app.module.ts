@@ -8,7 +8,6 @@ import { FeedbacksModule } from './modules/feedbacks/feedbacks.module';
 import { PatientsModule } from './modules/patients/patients.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { TrelloModule } from './modules/trello/trello.module';
-import { TelegramModule } from './modules/telegram/telegram.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { DoctorMessagesModule } from './modules/doctor-messages/doctor-messages.module';
 
@@ -27,7 +26,6 @@ import { DoctorMessagesModule } from './modules/doctor-messages/doctor-messages.
     PatientsModule,
     ReportsModule,
     TrelloModule,
-    TelegramModule,
     DoctorMessagesModule,
   ],
   controllers: [],
