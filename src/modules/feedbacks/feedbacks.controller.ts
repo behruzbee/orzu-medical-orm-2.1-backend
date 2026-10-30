@@ -1,5 +1,6 @@
 import {
   Controller,
+  ForbiddenException,
   Get,
   Post,
   Param,
@@ -20,6 +21,7 @@ import {
 } from '@nestjs/swagger';
 import { CreateSubcategoryDto } from './dto/create-subcategory.dto';
 import { AnalyticsQueryDto } from './dto/analytics-query.dto';
+import { isAudio } from '../archive/audio-policy';
 
 @ApiTags('Feedbacks')
 @ApiBearerAuth('jwt')
@@ -76,6 +78,8 @@ export class FeedbacksController {
   @ApiOperation({ summary: 'Get evidence media file' })
   async getFile(@Param('id') id: string, @Res({ passthrough: true }) res) {
     const evidence = await this.feedbacksService.getEvidenceFile(id);
+    if (isAudio(evidence))
+      throw new ForbiddenException('Use protected audio playback');
 
     // 1. Простая карта расширений на основе вашего FilesService
     const extensionMap: Record<string, string> = {

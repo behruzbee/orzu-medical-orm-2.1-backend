@@ -1,9 +1,19 @@
 import { Module } from '@nestjs/common';
 import { ArchiveController } from './archive.controller';
 import { ArchiveService } from './archive.service';
+import { AudioPlaybackService } from './audio-playback.service';
+import {
+  AudioOriginGuard,
+  AudioPlaybackController,
+  AudioGuestController,
+} from './audio-playback.controller';
 
 @Module({
-  controllers: [ArchiveController],
-  providers: [ArchiveService],
+  controllers: [
+    ArchiveController,
+    AudioPlaybackController,
+    AudioGuestController,
+  ],
+  providers: [ArchiveService, AudioPlaybackService, AudioOriginGuard],
 })
 export class ArchiveModule {}

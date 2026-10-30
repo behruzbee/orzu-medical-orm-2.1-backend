@@ -67,7 +67,7 @@ export class ArchiveService implements OnModuleDestroy {
     const sql =
       source === 'v21'
         ? `SELECT e.id, e."feedbackId", r."patientId", p.name AS "patientName",
-                  r.branch, e."mimeType", octet_length(e."mediaData") AS bytes
+                  r.branch, e.type AS "evidenceType", e."mimeType", octet_length(e."mediaData") AS bytes
                   ${file ? ', e."mediaData" AS data' : ''}
            FROM evidence_messages e
            JOIN feedbacks f ON f.id = e."feedbackId"
@@ -77,7 +77,7 @@ export class ArchiveService implements OnModuleDestroy {
              AND r."deletedAt" IS NULL AND p."deletedAt" IS NULL`
         : source === 'v2'
           ? `SELECT e.id, e."feedbackId", f."patientId", p.name AS "patientName",
-                  p.branch, e."mimeType", octet_length(e."mediaData") AS bytes
+                  p.branch, e.type AS "evidenceType", e."mimeType", octet_length(e."mediaData") AS bytes
                   ${file ? ', e."mediaData" AS data' : ''}
            FROM evidence_messages e
            JOIN feedbacks f ON f.id = e."feedbackId"
@@ -85,7 +85,7 @@ export class ArchiveService implements OnModuleDestroy {
            WHERE e.id = $1 AND f.id = $2 AND e."mediaData" IS NOT NULL`
           : `SELECT e.id, e."feedbackId", f."patientId",
                   concat_ws(' ', p."firstName", p."lastName") AS "patientName",
-                  p.branch, e."mimeType", octet_length(e."fileData") AS bytes
+                  p.branch, 'audio' AS "evidenceType", e."mimeType", octet_length(e."fileData") AS bytes
                   ${file ? ', e."fileData" AS data' : ''}
            FROM voice_messages e
            JOIN feedbacks f ON f.id = e."feedbackId"

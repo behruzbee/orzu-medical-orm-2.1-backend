@@ -13,6 +13,8 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api');
 
+  app.use('/api/audio-playback', json({ limit: '2kb' }));
+  app.use('/api/audio-guest', json({ limit: '2kb' }));
   app.use(json({ limit: '50mb' }));
   app.use(urlencoded({ extended: true, limit: '50mb' }));
 

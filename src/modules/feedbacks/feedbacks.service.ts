@@ -632,7 +632,7 @@ ${dto.comment || 'К заявке не оставлен комментарий.'
   async getEvidenceFile(id: string) {
     const evidence = await this.evidenceRepo.findOne({
       where: { id },
-      select: ['id', 'mediaData', 'mimeType'],
+      select: ['id', 'type', 'mediaData', 'mimeType'],
     });
 
     if (!evidence || !evidence.mediaData) {

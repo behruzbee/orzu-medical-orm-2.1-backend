@@ -1,5 +1,6 @@
 import {
   Controller,
+  ForbiddenException,
   Get,
   Header,
   Param,
@@ -12,6 +13,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AdminGuard } from '../../common/guards/admin.guard';
 import { ArchiveService } from './archive.service';
+import { isAudio } from './audio-policy';
 
 const mediaTypes = new Map([
   ['audio/ogg', 'ogg'],
@@ -52,6 +54,8 @@ export class ArchiveController {
     @Res({ passthrough: true }) res,
   ) {
     const record = await this.archive.evidence(source, feedbackId, id, true);
+    if (isAudio(record))
+      throw new ForbiddenException('Use protected audio playback');
     const suppliedType = String(record.mimeType || '')
       .split(';')[0]
       .toLowerCase();
