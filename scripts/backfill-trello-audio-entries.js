@@ -148,6 +148,20 @@ async function run({ env, patients, mapping, auditPath }) {
       }
       await sleep(3100);
     }
+    // A resumed run may have saved a share just before a status-request timeout.
+    for (const link of entry.links) {
+      const { data: status } = await api.post('/audio-guest/status', {
+        token: new URLSearchParams(new URL(link.url).hash.slice(1)).get('t'),
+      });
+      if (
+        !status.available ||
+        status.path !==
+          `/archive/v21/feedbacks/${entry.feedbackId}/evidence/${link.id}`
+      ) {
+        await revoke(entry);
+        throw Error('Guest target unavailable before publishing');
+      }
+    }
     entry.after = addAudioEntries(entry.before, entry.links);
     save();
     const latest = await read();

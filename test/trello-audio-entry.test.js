@@ -1,6 +1,70 @@
 require('reflect-metadata');
 const test = require('node:test');
 const assert = require('node:assert/strict');
+
+test('resumed backfill rechecks saved guest destinations before publishing', async () => {
+  const fs = require('node:fs'),
+    os = require('node:os'),
+    path = require('node:path');
+  const axios = require('axios');
+  const { run } = require('../scripts/backfill-trello-audio-entries');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'audio-backfill-'));
+  const auditPath = path.join(directory, 'audit.json');
+  const original = { create: axios.create, get: axios.get, put: axios.put };
+  const feedbackId = '22222222-2222-4222-8222-222222222222';
+  const id = '33333333-3333-4333-8333-333333333333';
+  const cardId = 'a'.repeat(24),
+    boardId = 'b'.repeat(24);
+  const before = `Обращение и вложения: https://feedback.orzumedical.uz/patients/request\nFeedbackID: ${feedbackId}`;
+  const entry = {
+    id: cardId,
+    boardId,
+    feedbackId,
+    requestId: 'request',
+    before,
+    status: 'preparing',
+    links: [
+      {
+        id,
+        feedbackId,
+        url: `https://feedback.orzumedical.uz/listen#t=${'x'.repeat(43)}`,
+      },
+    ],
+  };
+  fs.writeFileSync(auditPath, JSON.stringify({ cards: [entry] }));
+  let revoked = false;
+  axios.create = () => ({
+    post: async (url) => {
+      if (url.endsWith('/revoke')) {
+        revoked = true;
+        return {};
+      }
+      assert.equal(url, '/audio-guest/status');
+      return { data: { available: true, path: '/archive/wrong-file' } };
+    },
+  });
+  axios.get = async () => ({ data: { idBoard: boardId, desc: before } });
+  axios.put = async () => {
+    throw Error('Must not write a mismatched link');
+  };
+  try {
+    await assert.rejects(
+      run({
+        env: { TRELLO_BOARD_ID: boardId },
+        auditPath,
+        patients: [{ cardId, feedbackId, requestId: 'request', valid: true }],
+        mapping: {
+          evidence: [{ id, feedbackId, mimeType: 'audio/ogg', bytes: 1 }],
+        },
+      }),
+      /Guest target unavailable before publishing/,
+    );
+    assert.equal(revoked, true);
+  } finally {
+    Object.assign(axios, original);
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
 const {
   trelloEvidenceLines,
   patientRequestUrl,
