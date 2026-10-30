@@ -6,6 +6,9 @@ const {
   patientRequestUrl,
 } = require('../src/modules/feedbacks/trello-links');
 const { addAudioEntries } = require('../scripts/backfill-trello-audio-entries');
+const {
+  FeedbacksService,
+} = require('../src/modules/feedbacks/feedbacks.service');
 
 test('new Trello audio entry opens the guest player, not a login-protected patient page', async () => {
   const calls = [];
@@ -76,4 +79,68 @@ test('backfill adds explicit audio links without publishing or replacing the pat
   assert.ok(after.startsWith('Original clinical text\n'));
   assert.ok(after.endsWith('FeedbackID: feedback'));
   assert.throws(() => addAudioEntries('Unrelated card', [{ url: voice }]));
+});
+
+test('creating feedback wires the persisted audio ID into the actual Trello description', async () => {
+  let description;
+  let shared;
+  const guest = `https://feedback.example.test/listen#t=${'a'.repeat(43)}`;
+  const repo = {
+    count: async () => 0,
+    create: (value) => value,
+    save: async (value) => ({ ...value, id: 'feedback-id' }),
+  };
+  const request = {
+    id: 'request-id',
+    branch: 'Test',
+    patient: { name: 'Test', phone: '' },
+  };
+  const service = new FeedbacksService(
+    repo,
+    {},
+    { findOne: async () => ({ name: 'Test subcategory' }) },
+    { findOne: async () => request, save: async (value) => value },
+    {
+      createCard: async (_list, _name, desc) => {
+        description = desc;
+        return null;
+      },
+    },
+    {
+      get: (key) =>
+        ({
+          TRELLO_LIST_NEW_COMPLAINTS: 'list-id',
+          FRONTEND_URL: 'https://feedback.example.test',
+        })[key],
+    },
+    {
+      share: async (...args) => {
+        shared = args;
+        return { url: guest };
+      },
+    },
+  );
+  const feedback = await service.createComplaint(
+    'request-id',
+    {
+      category: 'doctors',
+      subcategory: 'Test subcategory',
+      ratings: {},
+      comment: 'Test note',
+      evidence: [{ type: 'audio', mediaUrl: 'data:audio/ogg;base64,YXVkaW8=' }],
+    },
+    'operator-id',
+  );
+  assert.deepEqual(shared, [
+    'operator-id',
+    'v21',
+    'feedback-id',
+    feedback.evidenceMessages[0].id,
+  ]);
+  assert.ok(description.includes(guest));
+  assert.ok(
+    description.includes(
+      'Карточка пациента (вход в аккаунт): https://feedback.example.test/patients/request-id',
+    ),
+  );
 });
