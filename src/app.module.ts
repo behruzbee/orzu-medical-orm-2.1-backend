@@ -10,6 +10,7 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { TrelloModule } from './modules/trello/trello.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { DoctorMessagesModule } from './modules/doctor-messages/doctor-messages.module';
+import { ArchiveModule } from './modules/archive/archive.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { DoctorMessagesModule } from './modules/doctor-messages/doctor-messages.
     ReportsModule,
     TrelloModule,
     DoctorMessagesModule,
+    ArchiveModule,
   ],
   controllers: [],
   providers: [],
