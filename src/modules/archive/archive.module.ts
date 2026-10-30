@@ -15,5 +15,6 @@ import {
     AudioGuestController,
   ],
   providers: [ArchiveService, AudioPlaybackService, AudioOriginGuard],
+  exports: [AudioPlaybackService],
 })
 export class ArchiveModule {}

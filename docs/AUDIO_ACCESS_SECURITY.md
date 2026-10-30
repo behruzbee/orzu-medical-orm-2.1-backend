@@ -16,7 +16,7 @@ not enabled. Current patient-page audio retains its existing employee access.
 3. Atomic PostgreSQL claim prevents replay across tabs, devices, or API replicas.
 4. Guest expiry of 24 hours; authenticated playback permission expires in 60 seconds.
 5. Repeated access checks active-account JWT, token version, role, and ticket owner.
-6. Administrator-only guest issuance and revocation; exact record binding and
+6. Administrator-only manual guest issuance and revocation; exact record binding and
    soft-delete checks are repeated before delivering bytes.
 7. Shared database rate limits, 2 KB request bodies, POST-only claims, strict
    Origin/custom-header checks, and rejection of Range requests.
@@ -60,6 +60,9 @@ X-Audio-Playback: 1; authenticated routes also require a current Bearer token.
 
 The archive page lets administrators create/copy/revoke a new guest link explicitly.
 Creating a new link grants a new guest attempt; normal page refresh does not.
+New feedback published to Trello includes a separate one-use link for each newly
+uploaded audio file, audited under the submitting operator. The patient-record
+footer stays authenticated and is explicitly labelled as requiring sign-in.
 Existing non-audio files, patient links, and unresolved legacy links are not rewritten.
 
 References: [OWASP token guidance](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html),
