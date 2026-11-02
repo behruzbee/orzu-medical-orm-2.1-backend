@@ -313,16 +313,11 @@ export class ReportStatsService {
       arrivalDate: Between(start, end),
     };
 
-    if (query.branch) {
-      requestWhere.branch = query.branch;
-      errorWhere.branch = query.branch;
-    }
-
     const relations = options.includeReportRelations
       ? ['patient', 'feedback', 'feedback.evidenceMessages']
       : ['feedback'];
 
-    const [requests, errorsLog] = await Promise.all([
+    const [allRequests, allErrorsLog] = await Promise.all([
       this.requestRepository.find({
         where: requestWhere,
         relations,
@@ -332,6 +327,18 @@ export class ReportStatsService {
         order: { createdAt: 'DESC' },
       }),
     ]);
+
+    const normalizedBranch = formatBranchName(query.branch);
+    const requests = normalizedBranch
+      ? allRequests.filter(
+          (request) => formatBranchName(request.branch) === normalizedBranch,
+        )
+      : allRequests;
+    const errorsLog = normalizedBranch
+      ? allErrorsLog.filter(
+          (error) => formatBranchName(error.branch) === normalizedBranch,
+        )
+      : allErrorsLog;
 
     const reqBranches = requests
       .map((request) => request.branch)

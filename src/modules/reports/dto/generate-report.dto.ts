@@ -19,4 +19,11 @@ export class GenerateReportDto {
   @IsOptional()
   @IsBoolean()
   includePersonalData?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Generate the report only for the selected branch.',
+  })
+  @IsOptional()
+  @IsString()
+  branch?: string;
 }
