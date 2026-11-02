@@ -10,7 +10,7 @@ import {
   UseGuards,
   StreamableFile,
 } from '@nestjs/common';
-import { Response } from 'express';
+import type { Response } from 'express';
 import { FeedbacksService } from './feedbacks.service';
 import { AuthGuard } from '@nestjs/passport';
 import {
@@ -52,6 +52,30 @@ export class FeedbacksController {
       query.dateTo,
       query.branch,
     );
+  }
+
+  @Get('analytics/export')
+  @ApiOperation({ summary: 'Download BI analytics as an Excel workbook' })
+  async exportAnalytics(
+    @Query() query: AnalyticsQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const content = await this.feedbacksService.exportAnalyticsExcel(
+      query.dateFrom,
+      query.dateTo,
+      query.branch,
+    );
+    const branchPart = query.branch ? `_${query.branch}` : '';
+    const fileName = `BI_${query.dateFrom || 'default'}_${query.dateTo || 'default'}${branchPart}.xlsx`;
+
+    res.set({
+      'Content-Type':
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="bi-report.xlsx"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+      'Cache-Control': 'no-store, private',
+    });
+
+    return new StreamableFile(content);
   }
 
   @Get('subcategories')

@@ -24,6 +24,7 @@ import { AudioPlaybackService } from '../archive/audio-playback.service';
 import { FeedbackSubcategory } from './entities/feedback-subcategory.entity';
 import { CreateSubcategoryDto } from './dto/create-subcategory.dto';
 import { formatBranchName } from 'src/common/utils/branch.util';
+import * as ExcelJS from 'exceljs';
 
 const DEFAULT_SUBCATEGORIES: Record<string, string[]> = {
   doctors: ['Муомала', 'Ташхис', 'Даволаш сифати', 'Кутиш вақти'],
@@ -632,6 +633,107 @@ ${dto.comment || 'К заявке не оставлен комментарий.'
       period,
       generatedAt: new Date().toISOString(),
     };
+  }
+
+  async exportAnalyticsExcel(
+    dateFrom?: string,
+    dateTo?: string,
+    branch?: string,
+  ): Promise<Buffer> {
+    const analytics = await this.getAnalytics(dateFrom, dateTo, branch);
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Orzu Medical BI';
+    workbook.created = new Date();
+
+    const headerFill: ExcelJS.Fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF0B7285' },
+    };
+    const headerFont: Partial<ExcelJS.Font> = {
+      bold: true,
+      color: { argb: 'FFFFFFFF' },
+    };
+    const styleHeader = (sheet: ExcelJS.Worksheet) => {
+      const row = sheet.getRow(1);
+      row.fill = headerFill;
+      row.font = headerFont;
+      row.alignment = { vertical: 'middle', horizontal: 'center' };
+      row.height = 24;
+      sheet.views = [{ state: 'frozen', ySplit: 1 }];
+      sheet.autoFilter = { from: 'A1', to: row.getCell(row.cellCount).address };
+    };
+
+    const summarySheet = workbook.addWorksheet('Сводка');
+    summarySheet.columns = [
+      { header: 'Показатель', key: 'metric', width: 38 },
+      { header: 'Значение', key: 'value', width: 24 },
+    ];
+    summarySheet.addRows([
+      { metric: 'Период', value: `${analytics.period.dateFrom} — ${analytics.period.dateTo}` },
+      { metric: 'Филиал', value: analytics.selectedBranch || 'Вся компания' },
+      { metric: 'Всего заявок', value: analytics.requests.summary.total },
+      { metric: 'Обработано заявок', value: analytics.requests.summary.processed },
+      { metric: 'Ответили', value: analytics.requests.summary.answered },
+      { metric: 'Не удалось дозвониться', value: analytics.requests.summary.missed },
+      { metric: 'Всего обращений', value: analytics.summary.total },
+      { metric: 'Жалобы', value: analytics.summary.complaints },
+      { metric: 'Предложения', value: analytics.summary.suggestions },
+      { metric: 'Повторные', value: analytics.summary.repeated },
+      { metric: 'Доля повторных', value: `${analytics.summary.repeatRate}%` },
+    ]);
+    styleHeader(summarySheet);
+
+    const dailySheet = workbook.addWorksheet('По дням');
+    dailySheet.columns = [
+      { header: 'Дата', key: 'date', width: 15 },
+      { header: 'Всего заявок', key: 'requests', width: 18 },
+      { header: 'Ответили', key: 'answered', width: 15 },
+      { header: 'Не дозвонились', key: 'missed', width: 20 },
+      { header: 'Жалобы', key: 'complaints', width: 14 },
+      { header: 'Предложения', key: 'suggestions', width: 16 },
+    ];
+    dailySheet.addRows(
+      analytics.daily.map((feedbackDay, index) => ({
+        date: feedbackDay.date,
+        requests: analytics.requests.daily[index]?.total || 0,
+        answered: analytics.requests.daily[index]?.answered || 0,
+        missed: analytics.requests.daily[index]?.missed || 0,
+        complaints: feedbackDay.complaints,
+        suggestions: feedbackDay.suggestions,
+      })),
+    );
+    styleHeader(dailySheet);
+
+    const categoriesSheet = workbook.addWorksheet('Категории');
+    categoriesSheet.columns = [
+      { header: 'Категория', key: 'category', width: 28 },
+      { header: 'Всего', key: 'count', width: 14 },
+      { header: 'Повторные', key: 'repeated', width: 16 },
+    ];
+    categoriesSheet.addRows(analytics.categories);
+    styleHeader(categoriesSheet);
+
+    const reasonsSheet = workbook.addWorksheet('Причины TOP-8');
+    reasonsSheet.columns = [
+      { header: 'Подкатегория', key: 'name', width: 38 },
+      { header: 'Категория', key: 'category', width: 24 },
+      { header: 'Всего', key: 'count', width: 14 },
+      { header: 'Повторные', key: 'repeated', width: 16 },
+    ];
+    reasonsSheet.addRows(analytics.subcategories);
+    styleHeader(reasonsSheet);
+
+    for (const sheet of workbook.worksheets) {
+      sheet.eachRow((row, rowNumber) => {
+        if (rowNumber > 1) {
+          row.alignment = { vertical: 'top', wrapText: true };
+        }
+      });
+    }
+
+    const content = await workbook.xlsx.writeBuffer();
+    return Buffer.from(content);
   }
 
   async getEvidenceFile(id: string) {
