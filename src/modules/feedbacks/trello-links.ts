@@ -46,7 +46,7 @@ export async function trelloEvidenceLines(
     if (item.type === 'audio' && item.mediaData?.length) {
       const url = await issueAudioLink(item.id);
       lines.push(
-        `${index + 1}. Слушать голосовое сообщение (один раз без входа): ${url}`,
+        `${index + 1}. Слушать голосовое сообщение (без входа): ${url}`,
       );
     } else {
       lines.push(

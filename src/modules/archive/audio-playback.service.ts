@@ -26,6 +26,15 @@ export class AudioPlaybackService {
     return createHash('sha256').update(token).digest('hex');
   }
 
+  private guestLinkTtlDays() {
+    const configured = Number(
+      this.config.get<string>('AUDIO_GUEST_LINK_TTL_DAYS') || 30,
+    );
+    return Number.isInteger(configured) && configured >= 1 && configured <= 365
+      ? configured
+      : 30;
+  }
+
   private async limit(actorId: string, operation: string, maximum: number) {
     const [row] = await this.db.query(
       `INSERT INTO audio_playback_limits (actor_id, operation, bucket, attempts)
@@ -118,11 +127,12 @@ export class AudioPlaybackService {
     await this.limit(actorId, 'share', 20);
     audioMime(await this.archive.evidence(source, feedbackId, id));
     const token = randomBytes(32).toString('base64url');
+    const ttlDays = this.guestLinkTtlDays();
     const [row] = await this.db.transaction(async (db) => {
       const result = await db.query(
         `INSERT INTO audio_guest_links (token_hash, created_by, source, feedback_id, evidence_id, expires_at)
-         VALUES ($1, $2, $3, $4, $5, now() + interval '24 hours') RETURNING expires_at`,
-        [this.hash(token), actorId, source, feedbackId, id],
+         VALUES ($1, $2, $3, $4, $5, now() + make_interval(days => $6::int)) RETURNING expires_at`,
+        [this.hash(token), actorId, source, feedbackId, id, ttlDays],
       );
       await db.query(
         `INSERT INTO audio_playback_audit (actor_id, action, evidence_id) VALUES ($1, 'guest_link_issued', $2)`,
@@ -157,7 +167,7 @@ export class AudioPlaybackService {
   async guestStatus(token: string) {
     const [row] = await this.db.query(
       `SELECT source, feedback_id, evidence_id,
-       (expires_at > now() AND consumed_at IS NULL AND revoked_at IS NULL) AS available
+       (expires_at > now() AND revoked_at IS NULL) AS available
        FROM audio_guest_links WHERE token_hash = $1`,
       [this.hash(token)],
     );
@@ -170,18 +180,18 @@ export class AudioPlaybackService {
 
   async guestPlay(token: string) {
     const rows = await this.db.query(
-      `WITH claimed AS (
-         UPDATE audio_guest_links SET consumed_at = now()
-         WHERE token_hash = $1 AND expires_at > now() AND consumed_at IS NULL AND revoked_at IS NULL
-         RETURNING source, feedback_id, evidence_id
+      `WITH available AS (
+         SELECT source, feedback_id, evidence_id
+         FROM audio_guest_links
+         WHERE token_hash = $1 AND expires_at > now() AND revoked_at IS NULL
        ), audited AS (
          INSERT INTO audio_playback_audit (action, evidence_id)
-         SELECT 'guest_claimed', evidence_id FROM claimed
-       ) SELECT * FROM claimed`,
+         SELECT 'guest_played', evidence_id FROM available
+       ) SELECT * FROM available`,
       [this.hash(token)],
     );
     if (rows.length !== 1)
-      throw new ForbiddenException('Sign in to listen again');
+      throw new ForbiddenException('Audio link unavailable');
     const ticket = rows[0];
     const record = await this.archive.evidence(
       ticket.source,
@@ -217,6 +227,9 @@ export class AudioPlaybackService {
       );
       await this.db.query(
         `DELETE FROM audio_guest_limits WHERE bucket < floor(extract(epoch FROM now()) / 60)::bigint - 2`,
+      );
+      await this.db.query(
+        `DELETE FROM audio_guest_links WHERE expires_at < now() - interval '30 days'`,
       );
       await this.db.query(
         `DELETE FROM audio_playback_audit WHERE occurred_at < now() - interval '30 days'`,
