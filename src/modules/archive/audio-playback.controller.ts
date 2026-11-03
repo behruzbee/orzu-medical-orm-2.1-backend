@@ -165,7 +165,7 @@ export class PublicAudioController {
       'Content-Type': 'text/html; charset=utf-8',
       'Content-Security-Policy': "default-src 'none'; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",
     });
-    res.send(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Orzu Medical — голосовое сообщение</title><style>body{font:18px/1.5 Arial;background:#f4f7f5;color:#17211d;margin:0;padding:24px}main{max-width:640px;margin:8vh auto;padding:28px;background:white;border-radius:18px}h1{color:#168c36;font-size:26px}audio{width:100%;margin:20px 0}</style></head><body><main><h1>Orzu Medical</h1><h2>Голосовое сообщение</h2><audio controls preload="metadata" src="${token}/file"></audio><p>Нажмите ▶ для прослушивания.</p></main></body></html>`);
+    res.send(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Orzu Medical — голосовое сообщение</title><style>body{font:18px/1.5 Arial;background:#f4f7f5;color:#17211d;margin:0;padding:24px}main{max-width:640px;margin:8vh auto;padding:28px;background:white;border-radius:18px}h1{color:#168c36;font-size:26px}audio{width:100%;margin:20px 0}</style></head><body><main><h1>Orzu Medical</h1><h2>Голосовое сообщение</h2><audio controls controlslist="nodownload" preload="metadata" src="${token}/file"></audio><p>Нажмите ▶ для прослушивания.</p></main></body></html>`);
   }
 
   @Get(':token/file')

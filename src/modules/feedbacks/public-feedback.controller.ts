@@ -58,7 +58,7 @@ export class PublicFeedbackController {
       .join('');
     const evidence = (feedback.evidenceMessages || [])
       .map((item, index) => {
-        if (item.type === 'audio') return `<li>Голосовое сообщение ${index + 1}<br><audio controls preload="none" src="${escapeHtml(token)}/audio/${escapeHtml(item.id)}"></audio></li>`;
+        if (item.type === 'audio') return `<li>Голосовое сообщение ${index + 1}<br><audio controls controlslist="nodownload" preload="none" src="${escapeHtml(token)}/audio/${escapeHtml(item.id)}"></audio></li>`;
         const label =
           item.type === 'audio'
             ? 'Голосовое сообщение — ссылка на прослушивание есть в Trello'
