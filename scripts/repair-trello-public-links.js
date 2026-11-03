@@ -32,12 +32,13 @@ async function connect(database) {
   const db = new Client({ connectionString: url.toString(), ssl: process.env.DB_SSL === 'false' ? false : { rejectUnauthorized: false } });
   await db.connect(); return db;
 }
-function rewrite(desc, cardUrl, audioLinks, evidenceIds) {
+function rewrite(desc, cardUrl, audioLinks, evidenceIds, originalUrls = []) {
   const lines = desc.split('\n').filter(line => {
     if (/^\s*(?:Голосовые сообщения|🎧 Голосовое сообщение)/.test(line)) return false;
     const links = line.match(urls) || [];
     return !links.some(value => {
       const url = new URL(value);
+      if (originalUrls.includes(value)) return true;
       if (!/orzumedical\.uz$|railway\.app$|vercel\.app$/.test(url.hostname)) return false;
       return /\/listen$|\/public\/audio\/|\/public\/feedback\/|\/patients\//.test(url.pathname)
         || /\/archive\/.*\/evidence\//.test(url.pathname)
@@ -79,8 +80,8 @@ async function main() {
             : 'SELECT id FROM feedbacks';
           const { rows: feedbacks } = await sourceDb.query(sql);
           const { rows: evidence } = await sourceDb.query(source === 'v1'
-            ? `SELECT id, "feedbackId", "mimeType", octet_length("fileData") AS bytes FROM voice_messages WHERE "fileData" IS NOT NULL`
-            : `SELECT id, "feedbackId", "mimeType", octet_length("mediaData") AS bytes FROM evidence_messages WHERE (type='audio' OR "mimeType" LIKE 'audio/%') AND "mediaData" IS NOT NULL`);
+            ? `SELECT id, "feedbackId", "mimeType", "voiceUrl" AS "originalUrl", octet_length("fileData") AS bytes FROM voice_messages WHERE "fileData" IS NOT NULL`
+            : `SELECT id, "feedbackId", "mimeType", "mediaUrl" AS "originalUrl", octet_length("mediaData") AS bytes FROM evidence_messages WHERE (type='audio' OR "mimeType" LIKE 'audio/%') AND "mediaData" IS NOT NULL`);
           for (const f of feedbacks) {
             if (records.has(f.id)) throw Error('Ambiguous feedback source');
             records.set(f.id, { ...f, source, audio: evidence.filter(e => e.feedbackId === f.id && e.bytes > 0).sort((a,b)=>a.id.localeCompare(b.id)) });
@@ -91,14 +92,23 @@ async function main() {
       const actor = actors[0]?.created_by;
       if (!actor) throw Error('No share issuer available');
       const evidenceFeedback = new Map();
-      for (const f of records.values()) for (const audio of f.audio) evidenceFeedback.set(audio.id, f.id);
+      const originalFeedback = new Map();
+      for (const f of records.values()) for (const audio of f.audio) {
+        evidenceFeedback.set(audio.id, f.id);
+        if (audio.originalUrl) {
+          if (!originalFeedback.has(audio.originalUrl)) originalFeedback.set(audio.originalUrl, new Set());
+          originalFeedback.get(audio.originalUrl).add(f.id);
+        }
+      }
       const { rows: guestLinks } = await db.query('SELECT token_hash, feedback_id FROM audio_guest_links');
       const guestFeedback = new Map(guestLinks.map(row => [row.token_hash.trim(), row.feedback_id]));
       const cards = [], skipped = [], targets = {};
       for (const card of byId.values()) {
+        if (process.argv.includes('--legacy-only') && card.desc.includes(origin + '/api/public/feedback/')) continue;
         const references = [...card.desc.matchAll(marker)].map(m=>m[1]);
         if (!references.length) {
           for (const value of card.desc.match(urls) || []) {
+            if (originalFeedback.has(value)) references.push(...originalFeedback.get(value));
             const url = new URL(value);
             const evidenceId = url.pathname.match(/\/evidence\/([0-9a-f-]{36})/)?.[1];
             if (evidenceFeedback.has(evidenceId)) references.push(evidenceFeedback.get(evidenceId));
@@ -118,7 +128,7 @@ async function main() {
           }) };
         }
         const target = targets[f.id];
-        cards.push({ id: card.id, boardId: card.idBoard, authIndex: card.authIndex, feedbackId: f.id, before: card.desc, after: rewrite(card.desc, target.cardUrl, target.audio, f.audio.map(e=>e.id)), status: 'pending' });
+        cards.push({ id: card.id, boardId: card.idBoard, authIndex: card.authIndex, feedbackId: f.id, before: card.desc, after: rewrite(card.desc, target.cardUrl, target.audio, f.audio.map(e=>e.id), f.audio.map(e=>e.originalUrl).filter(Boolean)), status: 'pending' });
       }
       plan = { targets, cards, skipped };
       console.log(JSON.stringify({ cards: cards.length, skipped: skipped.length, feedbacks: Object.keys(targets).length, audio: Object.values(targets).reduce((n,t)=>n+t.audio.length,0), sources: [...new Set(Object.values(targets).map(t=>t.source))] }));
