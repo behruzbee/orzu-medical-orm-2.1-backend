@@ -312,7 +312,7 @@ export class FeedbacksService implements OnModuleInit {
 
         const requestUrl = publicFeedbackUrl(
           this.configService.get<string>('UPLOAD_URL') ||
-            'https://orzu-medical-orm-21-backend-production.up.railway.app',
+            'https://feedback-api.orzumedical.uz',
           getJwtSecret(this.configService),
           savedFeedback.id,
           Number(

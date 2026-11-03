@@ -142,7 +142,7 @@ export class AudioPlaybackService {
     });
     const origin = new URL(
       this.config.get<string>('UPLOAD_URL') ||
-        'https://orzu-medical-orm-21-backend-production.up.railway.app',
+        'https://feedback-api.orzumedical.uz',
     ).origin;
     return {
       url: `${origin}/api/public/audio/${token}`,
