@@ -19,11 +19,13 @@ import {
 } from './entities/evidence-message.entity';
 import { CreateFeedbackDto } from './dto/create-feedback.dto';
 import { TrelloService } from '../trello/services/trello.service';
-import { patientRequestUrl, trelloEvidenceLines } from './trello-links';
+import { trelloEvidenceLines } from './trello-links';
 import { AudioPlaybackService } from '../archive/audio-playback.service';
 import { FeedbackSubcategory } from './entities/feedback-subcategory.entity';
 import { CreateSubcategoryDto } from './dto/create-subcategory.dto';
 import { formatBranchName } from 'src/common/utils/branch.util';
+import { getJwtSecret } from 'src/common/utils/jwt-secret.util';
+import { publicFeedbackUrl } from './public-feedback-link';
 
 const DEFAULT_SUBCATEGORIES: Record<string, string[]> = {
   doctors: ['Муомала', 'Ташхис', 'Даволаш сифати', 'Кутиш вақти'],
@@ -308,10 +310,15 @@ export class FeedbacksService implements OnModuleInit {
             }));
         }
 
-        const requestUrl = patientRequestUrl(
-          this.configService.get<string>('FRONTEND_URL') ||
-            'https://orzu-medical-orm-2-1-frontend.vercel.app',
-          request.id,
+        const requestUrl = publicFeedbackUrl(
+          this.configService.get<string>('UPLOAD_URL') ||
+            'https://orzu-medical-orm-21-backend-production.up.railway.app',
+          getJwtSecret(this.configService),
+          savedFeedback.id,
+          Number(
+            this.configService.get<string>('PUBLIC_FEEDBACK_LINK_TTL_DAYS') ||
+              30,
+          ),
         );
 
         const dateStr = new Date().toLocaleString('ru-RU', {
@@ -349,7 +356,7 @@ export class FeedbacksService implements OnModuleInit {
 ${dto.comment || 'К заявке не оставлен комментарий.'}${evidenceText}${ratingsText}
 
 📅 Дата отправки: ${dateStr}
-🔗 Карточка пациента (вход в аккаунт): ${requestUrl}
+🔗 Карточка обращения (без входа): ${requestUrl}
 🆔 FeedbackID: ${savedFeedback.id}`;
 
         const boardId = this.configService.get<string>('TRELLO_BOARD_ID');
@@ -394,6 +401,17 @@ ${dto.comment || 'К заявке не оставлен комментарий.'
       relations: ['request', 'evidenceMessages'],
       order: { createdAt: 'DESC' },
     });
+  }
+
+  async getPublicFeedbackCard(id: string) {
+    const feedback = await this.feedbackRepo.findOne({
+      where: { id },
+      relations: ['request', 'request.patient', 'evidenceMessages'],
+    });
+    if (!feedback?.request?.patient) {
+      throw new NotFoundException('Карточка обращения не найдена');
+    }
+    return feedback;
   }
 
   private resolveAnalyticsPeriod(dateFrom?: string, dateTo?: string) {

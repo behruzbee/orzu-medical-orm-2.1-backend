@@ -140,9 +140,14 @@ export class AudioPlaybackService {
       );
       return result;
     });
-    const origin = new URL(this.config.getOrThrow<string>('FRONTEND_URL'))
-      .origin;
-    return { url: `${origin}/listen#t=${token}`, expiresAt: row.expires_at };
+    const origin = new URL(
+      this.config.get<string>('UPLOAD_URL') ||
+        'https://orzu-medical-orm-21-backend-production.up.railway.app',
+    ).origin;
+    return {
+      url: `${origin}/api/public/audio/${token}`,
+      expiresAt: row.expires_at,
+    };
   }
 
   async guestLimit(address: string, token: string) {

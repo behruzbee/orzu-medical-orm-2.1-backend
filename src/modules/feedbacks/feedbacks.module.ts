@@ -8,6 +8,7 @@ import { TrelloModule } from '../trello/trello.module';
 import { PatientRequest } from '../patients/entities/patient_requests.entity';
 import { FeedbackSubcategory } from './entities/feedback-subcategory.entity';
 import { ArchiveModule } from '../archive/archive.module';
+import { PublicFeedbackController } from './public-feedback.controller';
 
 @Module({
   imports: [
@@ -20,7 +21,7 @@ import { ArchiveModule } from '../archive/archive.module';
     TrelloModule,
     ArchiveModule,
   ],
-  controllers: [FeedbacksController],
+  controllers: [FeedbacksController, PublicFeedbackController],
   providers: [FeedbacksService],
   exports: [FeedbacksService],
 })

@@ -10,6 +10,7 @@ const {
   AudioOriginGuard,
   AudioPlaybackController,
   AudioGuestController,
+  PublicAudioController,
 } = require('../src/modules/archive/audio-playback.controller');
 const {
   ArchiveController,
@@ -20,6 +21,10 @@ const {
 const { AdminGuard } = require('../src/common/guards/admin.guard');
 const { audioMime } = require('../src/modules/archive/audio-policy');
 const { replaceExact } = require('../scripts/trello-audio-shares');
+const {
+  createPublicFeedbackToken,
+  verifyPublicFeedbackToken,
+} = require('../src/modules/feedbacks/public-feedback-link');
 const actor = '11111111-1111-4111-8111-111111111111';
 const feedback = '22222222-2222-4222-8222-222222222222';
 const id = '33333333-3333-4333-8333-333333333333';
@@ -47,6 +52,7 @@ test('archive issuance and sharing require admin; playback requires an active JW
   assert.deepEqual(Reflect.getMetadata(GUARDS_METADATA, AudioGuestController), [
     AudioOriginGuard,
   ]);
+  assert.equal(Reflect.getMetadata(GUARDS_METADATA, PublicAudioController), undefined);
 });
 
 test('origin guard blocks cross-site, missing origin, form requests and ranges', () => {
@@ -202,28 +208,32 @@ test('guest preview never consumes, never exposes patient identity or file bytes
   });
 });
 
-test('guest playback is globally one-use, not based on cookies or browser storage', async () => {
-  let used = false;
+test('guest playback is reusable while the secret link is active', async () => {
+  let fetched = 0;
   const service = new AudioPlaybackService(
     {
       query: async (sql) => {
-        assert.match(sql, /UPDATE audio_guest_links/);
-        assert.match(sql, /consumed_at IS NULL/);
+        assert.match(sql, /FROM audio_guest_links/);
+        assert.doesNotMatch(sql, /UPDATE audio_guest_links/);
         assert.match(sql, /expires_at > now\(\)/);
         assert.match(sql, /revoked_at IS NULL/);
-        if (used) return [];
-        used = true;
         return [{ source: 'v2', feedback_id: feedback, evidence_id: id }];
       },
     },
-    { evidence: async () => record },
+    {
+      evidence: async () => {
+        fetched++;
+        return record;
+      },
+    },
     config,
   );
   await service.guestPlay('a'.repeat(43));
-  await assert.rejects(service.guestPlay('a'.repeat(43)), { status: 403 });
+  await service.guestPlay('a'.repeat(43));
+  assert.equal(fetched, 2);
 });
 
-test('guest links expire after 24 hours and secrets live in fragments, not URL paths or queries', async () => {
+test('guest links last 30 days and open audio directly without frontend login', async () => {
   const queries = [];
   const db = {
     query: async (sql, args) => {
@@ -238,11 +248,22 @@ test('guest links expire after 24 hours and secrets live in fragments, not URL p
     config,
   ).share(actor, 'v2', feedback, id);
   const url = new URL(shared.url);
-  assert.equal(url.pathname, '/listen');
+  assert.match(url.pathname, /^\/api\/public\/audio\/[A-Za-z0-9_-]{43}$/);
   assert.equal(url.search, '');
-  assert.match(url.hash, /^#t=[A-Za-z0-9_-]{43}$/);
-  assert.ok(queries.some(([sql]) => sql.includes('24 hours')));
-  assert.ok(!JSON.stringify(queries).includes(url.hash.slice(3)));
+  assert.equal(url.hash, '');
+  const insert = queries.find(([sql]) => sql.includes('INSERT INTO audio_guest_links'));
+  assert.match(insert[0], /make_interval/);
+  assert.equal(insert[1][5], 30);
+  const token = url.pathname.split('/').pop();
+  assert.ok(!JSON.stringify(queries).includes(token));
+});
+
+test('public feedback links are signed, expire and cannot be altered', () => {
+  const secret = 'test-secret-with-enough-entropy';
+  const token = createPublicFeedbackToken(secret, feedback, 30);
+  assert.equal(verifyPublicFeedbackToken(secret, token), feedback);
+  const changed = token.slice(0, -1) + (token.endsWith('a') ? 'b' : 'a');
+  assert.equal(verifyPublicFeedbackToken(secret, changed), null);
 });
 
 test('rate limiting rejects excess requests before evidence is read', async () => {

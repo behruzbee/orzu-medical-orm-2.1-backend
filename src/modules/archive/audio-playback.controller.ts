@@ -4,7 +4,9 @@ import {
   Controller,
   ExecutionContext,
   ForbiddenException,
+  Get,
   Injectable,
+  Param,
   Post,
   Req,
   Res,
@@ -138,6 +140,31 @@ export class AudioGuestController {
       body.token,
     );
     const record = await this.audio.guestPlay(body.token);
+    res.set({
+      ...audioHeaders,
+      'Content-Type': record.mimeType,
+      'Content-Disposition': 'inline',
+    });
+    return new StreamableFile(record.data);
+  }
+}
+
+@ApiTags('Public audio playback')
+@Controller('public/audio')
+export class PublicAudioController {
+  constructor(private readonly audio: AudioPlaybackService) {}
+
+  @Get(':token')
+  async play(
+    @Param('token') token: string,
+    @Req() req,
+    @Res({ passthrough: true }) res,
+  ) {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(token)) {
+      throw new ForbiddenException('Audio link unavailable');
+    }
+    await this.audio.guestLimit(req.socket.remoteAddress || 'unknown', token);
+    const record = await this.audio.guestPlay(token);
     res.set({
       ...audioHeaders,
       'Content-Type': record.mimeType,

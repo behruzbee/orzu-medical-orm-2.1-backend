@@ -6,6 +6,7 @@ import {
   AudioOriginGuard,
   AudioPlaybackController,
   AudioGuestController,
+  PublicAudioController,
 } from './audio-playback.controller';
 
 @Module({
@@ -13,6 +14,7 @@ import {
     ArchiveController,
     AudioPlaybackController,
     AudioGuestController,
+    PublicAudioController,
   ],
   providers: [ArchiveService, AudioPlaybackService, AudioOriginGuard],
   exports: [AudioPlaybackService],
