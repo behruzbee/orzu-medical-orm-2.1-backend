@@ -20,6 +20,7 @@ import { IsIn, IsString, IsUUID, Matches } from 'class-validator';
 import { AdminGuard } from '../../common/guards/admin.guard';
 import { AudioPlaybackService } from './audio-playback.service';
 import { audioHeaders } from './audio-policy';
+import { sendPublicAudio } from './public-audio-response';
 
 class AudioTargetDto {
   @IsIn(['v1', 'v2', 'v21']) source: string;
@@ -155,21 +156,29 @@ export class PublicAudioController {
   constructor(private readonly audio: AudioPlaybackService) {}
 
   @Get(':token')
+  async open(@Param('token') token: string, @Res() res) {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new ForbiddenException('Audio link unavailable');
+    const status = await this.audio.guestStatus(token);
+    if (!status.available) throw new ForbiddenException('Audio link unavailable');
+    res.set({
+      ...audioHeaders,
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Security-Policy': "default-src 'none'; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",
+    });
+    res.send(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Orzu Medical — голосовое сообщение</title><style>body{font:18px/1.5 Arial;background:#f4f7f5;color:#17211d;margin:0;padding:24px}main{max-width:640px;margin:8vh auto;padding:28px;background:white;border-radius:18px}h1{color:#168c36;font-size:26px}audio{width:100%;margin:20px 0}</style></head><body><main><h1>Orzu Medical</h1><h2>Голосовое сообщение</h2><audio controls preload="metadata" src="${token}/file"></audio><p>Нажмите ▶ для прослушивания.</p></main></body></html>`);
+  }
+
+  @Get(':token/file')
   async play(
     @Param('token') token: string,
     @Req() req,
-    @Res({ passthrough: true }) res,
+    @Res() res,
   ) {
     if (!/^[A-Za-z0-9_-]{43}$/.test(token)) {
       throw new ForbiddenException('Audio link unavailable');
     }
     await this.audio.guestLimit(req.socket.remoteAddress || 'unknown', token);
     const record = await this.audio.guestPlay(token);
-    res.set({
-      ...audioHeaders,
-      'Content-Type': record.mimeType,
-      'Content-Disposition': 'inline',
-    });
-    return new StreamableFile(record.data);
+    return sendPublicAudio(res, record, req.headers.range);
   }
 }

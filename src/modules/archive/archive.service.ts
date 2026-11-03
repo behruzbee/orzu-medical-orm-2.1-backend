@@ -109,4 +109,23 @@ export class ArchiveService implements OnModuleDestroy {
   async onModuleDestroy() {
     for (const pool of this.pools.values()) await pool.end();
   }
+
+  async feedbackCard(source: 'v1' | 'v2', id: string) {
+    if (!isUUID(id)) throw new NotFoundException('Card not found');
+    const db = this.pool(source);
+    const sql = source === 'v2'
+      ? `SELECT f.id, f.ratings, f.comment, f."createdAt", p.name, p.phone, p.branch
+         FROM feedbacks f LEFT JOIN patients p ON p.id = f."patientId" WHERE f.id = $1`
+      : `SELECT f.id, f.created_at AS "createdAt", f.category,
+         concat_ws(' ', f."firstName", f."lastName") AS name, f."phoneNumber" AS phone, p.branch
+         FROM feedbacks f LEFT JOIN patients p ON p.id = f."patientId" WHERE f.id = $1`;
+    const { rows } = await db.query(sql, [id]);
+    if (rows.length !== 1) throw new NotFoundException('Card not found');
+    const { rows: evidenceMessages } = await db.query(source === 'v2'
+      ? `SELECT id, type, text FROM evidence_messages WHERE "feedbackId" = $1 ORDER BY id`
+      : `SELECT id, 'audio' AS type FROM voice_messages WHERE "feedbackId" = $1 ORDER BY id`, [id]);
+    const row = rows[0];
+    return { ...row, type: 'complaint', occurrenceNumber: 1, evidenceMessages,
+      request: { branch: row.branch, patient: { name: row.name, phone: row.phone } } };
+  }
 }
