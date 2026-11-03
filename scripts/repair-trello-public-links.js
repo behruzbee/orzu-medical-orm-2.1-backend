@@ -11,8 +11,14 @@ const urls = /https?:\/\/[^\s<>"\)\]]+/g;
 const delay = ms => new Promise(r => setTimeout(r, ms));
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const planPath = process.env.PUBLIC_LINK_REPAIR_PLAN || '/app/uploads/public-link-repair-20261103.json';
+let nextTrelloRequest = 0;
 async function request(config) {
   for (let attempt = 0; ; attempt++) {
+    if (config.url.startsWith('https://api.trello.com/')) {
+      const start = Math.max(Date.now(), nextTrelloRequest);
+      nextTrelloRequest = start + 150;
+      await delay(Math.max(0, start - Date.now()));
+    }
     try { return await axios({ timeout: 30000, ...config }); }
     catch (e) {
       if (attempt >= 3 || (e.response && e.response.status !== 429 && e.response.status < 500)) throw e;
@@ -137,8 +143,11 @@ async function main() {
       const count = Object.values(plan.targets).filter(t=>t.verified).length;
       if (count % 30 === 0) console.log(`Verified ${count}/${Object.keys(plan.targets).length} feedbacks`);
     }
-    for (const [index, card] of plan.cards.entries()) {
-      if (card.status !== 'pending') continue;
+    const pending = plan.cards.filter(c => c.status === 'pending');
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < pending.length) {
+      const card = pending[cursor++];
       const auth = auths[card.authIndex];
       const url = `https://api.trello.com/1/cards/${card.id}`;
       const read = () => request({ url, params: { ...auth, fields: 'desc,idBoard' } }).then(r=>r.data);
@@ -155,8 +164,11 @@ async function main() {
         card.status = 'verified';
       }
       save();
-      if (index % 30 === 0) console.log(`Trello ${index + 1}/${plan.cards.length}`);
-    }
+      const completed = plan.cards.filter(c => c.status !== 'pending').length;
+      if (completed % 30 === 0) console.log(`Trello ${completed}/${plan.cards.length}`);
+      }
+    };
+    await Promise.all([worker(), worker(), worker(), worker()]);
     console.log(JSON.stringify({ results: plan.cards.reduce((m,c)=>(m[c.status]=(m[c.status]||0)+1,m),{}), missingFeedbacks: plan.skipped.length, conflicts: [...new Set(plan.cards.filter(c=>c.reason).map(c=>c.reason))] }));
   } finally { await db.end(); }
 }
