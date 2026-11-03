@@ -44,6 +44,19 @@ export class ReportsService {
     private readonly reportStatsService: ReportStatsService,
   ) {}
 
+  async getSummary(dto: GenerateReportDto) {
+    // Use the same cohort and status rules as the standard Excel report.
+    const data = await this.reportStatsService.loadReportData(dto);
+    return {
+      period: data.period,
+      requests: data.requests.length,
+      handedOver: data.totals.handedOver.count,
+      complaints: data.totals.feedback.complaints.count,
+      suggestions: data.totals.feedback.suggestions.count,
+      notRelated: data.totals.feedback.notRelatedComplaints.count,
+    };
+  }
+
   async findAll() {
     const reports = await this.reportRepository.find({
       order: { createdAt: 'DESC' },

@@ -5,6 +5,7 @@ import {
   Body,
   Delete,
   Param,
+  Query,
   Res,
   StreamableFile,
   UseGuards,
@@ -27,6 +28,12 @@ export class ReportsController {
   @ApiOperation({ summary: 'Get generated report history' })
   findAll() {
     return this.reportsService.findAll();
+  }
+
+  @Get('summary')
+  @ApiOperation({ summary: 'Preview standard Excel totals by patient arrival date' })
+  getSummary(@Query() dto: GenerateReportDto) {
+    return this.reportsService.getSummary(dto);
   }
 
   @Post('generate')

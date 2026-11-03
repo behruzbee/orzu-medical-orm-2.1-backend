@@ -25,10 +25,9 @@ export function formatBranchName(branch?: string | null): string | null {
   }
 
   const withoutFilialSuffix = normalized
-    .replace(/\bфилиали\b/gi, '')
-    .replace(/\bфилиал\b/gi, '')
-    .replace(/\bfiliali\b/gi, '')
-    .replace(/\bfilial\b/gi, '')
+    // JavaScript \b does not treat Cyrillic letters as word characters.
+    // Keep labels returned by the API safe to pass back as branch filters.
+    .replace(/(?:\s+(?:филиали?|filiali?))+$/iu, '')
     .trim();
 
   const base = withoutFilialSuffix || normalized;
