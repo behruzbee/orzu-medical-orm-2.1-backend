@@ -488,7 +488,7 @@ export class ReportsService {
         'Бемор (Пациент)',
         'Телефон',
         'Тип',
-        'Карточка пациента',
+        'Карточка пациента (Trello)',
         'Вложения',
       ];
       const lRow = linksSheet.addRow(linkHeaders);
@@ -535,10 +535,9 @@ export class ReportsService {
             `/patients/${req.patientId}`,
             frontendUrl,
           ).toString();
-          const profileCell = {
-            text: 'Открыть в CRM',
-            hyperlink: profileUrl,
-          };
+          const trelloCell = req.feedback?.trelloUrl
+            ? { text: 'Открыть в Trello', hyperlink: req.feedback.trelloUrl }
+            : '-';
           const mediaCount =
             req.feedback?.evidenceMessages?.filter((e) => e.mediaUrl).length ||
             0;
@@ -552,7 +551,7 @@ export class ReportsService {
             req.patient?.name || '-',
             req.patient?.phone || '-',
             typeStr,
-            profileCell,
+            trelloCell,
             mediaCell,
           ]);
 
