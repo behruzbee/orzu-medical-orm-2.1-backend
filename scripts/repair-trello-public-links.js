@@ -84,9 +84,23 @@ async function main() {
       const { rows: actors } = await db.query('SELECT created_by FROM audio_guest_links LIMIT 1');
       const actor = actors[0]?.created_by;
       if (!actor) throw Error('No share issuer available');
+      const evidenceFeedback = new Map();
+      for (const f of records.values()) for (const audio of f.audio) evidenceFeedback.set(audio.id, f.id);
+      const { rows: guestLinks } = await db.query('SELECT token_hash, feedback_id FROM audio_guest_links');
+      const guestFeedback = new Map(guestLinks.map(row => [row.token_hash.trim(), row.feedback_id]));
       const cards = [], skipped = [], targets = {};
       for (const card of byId.values()) {
-        const ids = [...new Set([...card.desc.matchAll(marker)].map(m=>m[1]))];
+        const references = [...card.desc.matchAll(marker)].map(m=>m[1]);
+        if (!references.length) {
+          for (const value of card.desc.match(urls) || []) {
+            const url = new URL(value);
+            const evidenceId = url.pathname.match(/\/evidence\/([0-9a-f-]{36})/)?.[1];
+            if (evidenceFeedback.has(evidenceId)) references.push(evidenceFeedback.get(evidenceId));
+            const guestToken = new URLSearchParams(url.hash.slice(1)).get('t');
+            if (guestToken && guestFeedback.has(hash(guestToken))) references.push(guestFeedback.get(hash(guestToken)));
+          }
+        }
+        const ids = [...new Set(references)];
         if (ids.length !== 1) continue;
         const f = records.get(ids[0]);
         if (!f) { skipped.push({ id: card.id, feedbackId: ids[0], reason: 'No active or archived feedback' }); continue; }
