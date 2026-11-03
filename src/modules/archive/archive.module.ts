@@ -17,6 +17,6 @@ import {
     PublicAudioController,
   ],
   providers: [ArchiveService, AudioPlaybackService, AudioOriginGuard],
-  exports: [AudioPlaybackService],
+  exports: [AudioPlaybackService, ArchiveService],
 })
 export class ArchiveModule {}
