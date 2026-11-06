@@ -15,13 +15,13 @@ import { CreateEvidenceDto } from './create-evidence.dto';
 
 export class CreateFeedbackDto {
   @ApiProperty({
-    example: { service: 5, doctor: 4, cleanliness: 5 },
+    example: { doctors: 4, nurses: 5, cleanliness: 5, food: 5, reception: 5, clinic: 5 },
     additionalProperties: { type: 'number' },
   })
   @IsObject()
   ratings: Record<string, number>;
 
-  @ApiProperty({ example: 'service' })
+  @ApiProperty({ example: 'doctors' })
   @IsString()
   @IsNotEmpty()
   category: string;

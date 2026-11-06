@@ -28,10 +28,10 @@ test('report preview and Excel retain arrival-date/status rules across months an
     ...extra,
   });
   const rows = [
-    request('feedback_neg', '2026-09-01', '2026-10-02'),
+    request('feedback_neg', '2026-09-01', '2026-10-02', { feedback: { ratings: { food: 4 } } }),
     request('feedback_neg', '2026-09-30T23:59:59.999', '2026-10-03'),
     request('feedback_not_related', '2026-09-12', '2026-09-12'),
-    request('feedback_pos', '2026-09-10', '2026-10-02'),
+    request('feedback_pos', '2026-09-10', '2026-10-02', { feedback: { ratings: { food: 4 } } }),
     request('all_ok', '2026-09-09', '2026-09-09'),
     request('new', '2026-09-10', '2026-09-10'),
     request('contacted', '2026-09-10', '2026-09-10'),
@@ -68,6 +68,9 @@ test('report preview and Excel retain arrival-date/status rules across months an
     // Original template positions: branch row 5, total row 6.
     for (const row of [5, 6]) {
       assert.equal(sheet.getCell(row, 4).value, summary.handedOver);
+      assert.equal(sheet.getCell(row, 44).value, 1); // Food 4: only the complaint.
+      assert.equal(sheet.getCell(row, 66).value, 5); // Overall 5 includes the suggestion.
+      assert.equal(sheet.getCell(row, 68).value, 1);
       assert.equal(sheet.getCell(row, 74).value, summary.complaints);
       assert.equal(sheet.getCell(row, 76).value, summary.suggestions);
       assert.equal(sheet.getCell(row, 77).value, summary.notRelated);

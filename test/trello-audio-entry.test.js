@@ -2,6 +2,18 @@ require('reflect-metadata');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+test('complaints require a reduced score in a report category before writing anything', async () => {
+  const { FeedbacksService } = require('../src/modules/feedbacks/feedbacks.service');
+  const { CallHistoryService } = require('../src/modules/call-history/call-history.service');
+  const service = new FeedbacksService();
+  for (const ratings of [undefined, {}, { food: 5 }, { fake: 4 }, { food: 1 }, { food: 3.5 }]) {
+    await assert.rejects(service.createComplaint('request', { ratings }, 'operator'),
+      error => error.getStatus() === 400);
+  }
+  await assert.rejects(new CallHistoryService().create('request', { status: 'feedback_neg' }, 'operator'),
+    error => error.getStatus() === 400);
+});
+
 test('resumed backfill rechecks saved guest destinations before publishing', async () => {
   const fs = require('node:fs'),
     os = require('node:os'),
@@ -189,7 +201,7 @@ test('creating feedback wires the persisted audio ID into the actual Trello desc
     {
       category: 'doctors',
       subcategory: 'Test subcategory',
-      ratings: {},
+      ratings: { doctors: 4 },
       comment: 'Test note',
       evidence: [{ type: 'audio', mediaUrl: 'data:audio/ogg;base64,YXVkaW8=' }],
     },

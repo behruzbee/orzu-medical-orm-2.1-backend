@@ -1091,7 +1091,8 @@ export class ReportStatsService {
       REPORT_RATING_CATEGORIES.forEach((category) => {
         let score: ReportScore = 5;
 
-        if (request.status !== RequestStatus.FEEDBACK_NOT_RELATED) {
+        if (request.status !== RequestStatus.FEEDBACK_NOT_RELATED &&
+            request.status !== RequestStatus.FEEDBACK_POSITIVE) {
           const rawScore = ratingsObj[category.id];
           const numericScore = Number(rawScore);
           score = REPORT_SCORE_VALUES.includes(numericScore as ReportScore)
@@ -1452,7 +1453,7 @@ export class ReportStatsService {
     const ratingValueSql = `feedback."ratings" ->> '${categoryId}'`;
     const numericRatingSql = `CASE WHEN ${ratingValueSql} ~ '^[0-9]+(\\.[0-9]+)?$' THEN (${ratingValueSql})::numeric ELSE NULL END`;
 
-    return `CASE WHEN patient_request."status" = '${RequestStatus.FEEDBACK_NOT_RELATED}' THEN 5 WHEN ${numericRatingSql} IN (2, 3, 4, 5) THEN (${numericRatingSql})::int ELSE 5 END`;
+    return `CASE WHEN patient_request."status" IN ('${RequestStatus.FEEDBACK_NOT_RELATED}', '${RequestStatus.FEEDBACK_POSITIVE}') THEN 5 WHEN ${numericRatingSql} IN (2, 3, 4, 5) THEN (${numericRatingSql})::int ELSE 5 END`;
   }
 
   private ratingAverage(ratings: Record<ReportScore, ReportMetricValue>) {

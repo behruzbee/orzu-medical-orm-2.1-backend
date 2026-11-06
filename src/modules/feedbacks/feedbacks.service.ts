@@ -161,6 +161,13 @@ export class FeedbacksService implements OnModuleInit {
     operatorId: string,
     type: 'complaint' | 'suggestion',
   ) {
+    if (type === 'complaint' && !Object.keys(DEFAULT_SUBCATEGORIES).some(
+      (category) => [2, 3, 4].includes(dto.ratings?.[category]),
+    )) {
+      throw new BadRequestException(
+        'Чтобы отправить жалобу, поставьте 2, 3 или 4 хотя бы по одной категории.',
+      );
+    }
     const request = await this.requestRepo.findOne({
       where: { id: requestId },
       relations: ['patient', 'feedback', 'feedback.evidenceMessages'],

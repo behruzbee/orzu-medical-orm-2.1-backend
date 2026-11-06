@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between } from 'typeorm';
 import { CallStatus } from './entities/call-status.entity';
@@ -17,6 +17,9 @@ export class CallHistoryService {
   ) {}
 
   async create(requestId: string, dto: AddCallStatusDto, operatorId: string) {
+    if (dto.status === RequestStatus.FEEDBACK_NEGATIVE) {
+      throw new BadRequestException('Для регистрации жалобы заполните форму с оценками.');
+    }
     let record = await this.callRepository.findOne({ where: { requestId } });
 
     if (record) {
